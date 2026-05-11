@@ -7,13 +7,13 @@ from app.models import VMRequestStatus
 from app.schemas import (
     VMRequestAvailabilityRequest,
     VMRequestAvailabilityResponse,
-    VMRequestWindowAvailabilityRequest,
-    VMRequestWindowAvailabilityResponse,
     VMRequestCreate,
     VMRequestPublic,
     VMRequestReview,
     VMRequestReviewContext,
     VMRequestsPublic,
+    VMRequestWindowAvailabilityRequest,
+    VMRequestWindowAvailabilityResponse,
 )
 from app.services.vm import vm_request_availability_service, vm_request_service
 

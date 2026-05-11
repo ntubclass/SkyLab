@@ -145,8 +145,6 @@ from .vm_request import (
     VMRequestAvailabilitySlot,
     VMRequestAvailabilityStackItem,
     VMRequestAvailabilitySummary,
-    VMRequestWindowAvailabilityRequest,
-    VMRequestWindowAvailabilityResponse,
     VMRequestCreate,
     VMRequestPlacementPreview,
     VMRequestPublic,
@@ -157,6 +155,8 @@ from .vm_request import (
     VMRequestReviewProjectedNode,
     VMRequestReviewRuntimeResource,
     VMRequestsPublic,
+    VMRequestWindowAvailabilityRequest,
+    VMRequestWindowAvailabilityResponse,
 )
 
 __all__ = [
