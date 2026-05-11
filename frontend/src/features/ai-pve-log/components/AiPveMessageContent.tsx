@@ -41,12 +41,7 @@ function sanitizeContent(text: string): string {
 /**
  * AI PVE Message Content Block - extracted from Page
  */
-export function AiPveMessageContent({
-  groupId,
-}: {
-  groupId: string
-}) {
-  const { showErrorToast } = useCustomToast()
+export function AiPveMessageContent({ groupId }: { groupId: string }) {
 
   const [input, setInput] = useState("")
   const [isSending, setIsSending] = useState(false)
