@@ -593,12 +593,6 @@ def extend_session(
     )
 
 
-EXPIRY_WARNING_HOURS = 24
-"""How long before ``resource.expiry_date`` we start warning the user. Kept as
-a module constant rather than an admin setting to keep the surface small;
-move to ProxmoxConfig if it ever needs to be admin-tunable."""
-
-
 def get_session_status(
     *,
     session: Session,
@@ -621,30 +615,25 @@ def get_session_status(
     auto_stop_at = resource.auto_stop_at if resource else None
     auto_stop_reason = resource.auto_stop_reason if resource else None
 
+    policy = get_schedule_policy(session=session)
+
     minutes_until_stop: int | None = None
     auto_stop_warn = False
     if running and auto_stop_at:
         delta = auto_stop_at - _utc_now()
         minutes_until_stop = max(int(delta.total_seconds() // 60), 0)
-        policy = get_schedule_policy(session=session)
         auto_stop_warn = minutes_until_stop <= policy.practice_warning_minutes
 
-    # expiry_date is a date (no tz / time); warn when within 24h of midnight UTC
-    # of that day. ``hours_until_expiry`` is computed from ``end-of-expiry-day``
-    # in UTC so we don't claim 24h when the resource expires "today".
     expiry_at: datetime | None = None
     hours_until_expiry: int | None = None
     expiry_warn = False
     if running and resource and resource.expiry_date and resource.batch_job_id is None:
-        # Treat the expiry date as the END of that day in UTC (00:00 of the
-        # following day) so resources stay valid through their full last day.
         expiry_at = datetime.combine(
             resource.expiry_date, datetime.min.time(), tzinfo=UTC
         ) + timedelta(days=1)
         delta_h = (expiry_at - _utc_now()).total_seconds() / 3600
         hours_until_expiry = max(int(delta_h), 0)
-        # Only warn while the resource is still alive (positive remaining time).
-        expiry_warn = 0 < delta_h <= EXPIRY_WARNING_HOURS
+        expiry_warn = 0 < delta_h <= policy.expiry_warning_hours
 
     # auto_stop is more urgent (minutes vs hours), so it takes priority.
     if auto_stop_warn:
