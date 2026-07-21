@@ -15,7 +15,7 @@ python-multipart>=0.0.27
 aiofiles>=23.0
 
 # 視覺模型支援（圖片處理）
-pillow>=10.0
+pillow>=12.3.0
 python-docx
 python-pptx
 
