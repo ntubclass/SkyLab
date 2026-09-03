@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./AiMonitoringPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import LoadingState from "../../../components/LoadingState/LoadingState";
+import SharedEmptyState from "../../../components/EmptyState/EmptyState";
 import { AiMonitoringService } from "../../../services/aiMonitoring";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 function presetToRange(preset) {
   const end = new Date();
@@ -82,16 +85,8 @@ function isOkStatus(status) {
   );
 }
 
-function EmptyState({ icon, title, desc }) {
-  return (
-    <div className={styles.empty}>
-      <div className={styles.emptyIcon}>
-        <MIcon name={icon} size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>{title}</h2>
-      <p className={styles.emptyDesc}>{desc}</p>
-    </div>
-  );
+function EmptyState({ icon, title }) {
+  return <SharedEmptyState icon={icon} title={title} />;
 }
 
 function StatusBadge({ status }) {
@@ -204,11 +199,7 @@ export default function AiMonitoringPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>AI API 使用監控</h1>
-          <p className={styles.pageSubtitle}>檢視 AI Proxy 與 Template 服務的呼叫紀錄與用量統計</p>
-        </div>
+      <PageHeader title="使用監控" subtitle="檢視 AI Proxy 與 Template 服務的呼叫紀錄與用量統計">
         <div className={styles.pageActions}>
           <div className={styles.segment}>
             {PRESETS.map((p) => (
@@ -223,7 +214,7 @@ export default function AiMonitoringPage() {
             ))}
           </div>
         </div>
-      </div>
+      </PageHeader>
 
       <div className={styles.statRow}>
         <div className={styles.statCard}>
@@ -292,12 +283,13 @@ export default function AiMonitoringPage() {
       </div>
 
       <div className={styles.content}>
-        {tab === "users" ? (
+        {loading ? (
+          <LoadingState fullPage />
+        ) : tab === "users" ? (
           visibleUsers.length === 0 ? (
             <EmptyState
               icon="groups"
               title="尚無使用者用量資料"
-              desc="使用者呼叫 AI 服務後,統計資料會出現在這裡"
             />
           ) : (
             <div className={styles.tableWrap}>
@@ -341,7 +333,6 @@ export default function AiMonitoringPage() {
           <EmptyState
             icon="analytics"
             title="尚無呼叫紀錄"
-            desc={`此時段內沒有 ${tab === "proxy" ? "Proxy" : "Template"} 呼叫紀錄`}
           />
         ) : (
           <div className={styles.tableWrap}>

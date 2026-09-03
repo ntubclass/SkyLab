@@ -157,7 +157,9 @@ def test_gpu_node_counts_are_loaded_from_proxmox_mappings(
     proxmox = SimpleNamespace(
         cluster=SimpleNamespace(mapping=SimpleNamespace(pci=FakePciMappings()))
     )
-    monkeypatch.setattr(gpu_service, "get_proxmox_api", lambda: proxmox)
+    monkeypatch.setattr(
+        gpu_service, "iter_connection_clients", lambda: [(None, proxmox)]
+    )
 
     assert gpu_service.get_gpu_node_counts() == {"pve-a": 2, "pve-b": 1}
     assert gpu_service.get_gpu_node_counts(mapping_id="gpu-b") == {"pve-b": 1}
@@ -324,6 +326,7 @@ def _seed_lxc_template(
     *,
     pve_vmid: int = 9100,
     status: VMTemplateStatus = VMTemplateStatus.ready,
+    student_requestable: bool = True,
 ) -> VMTemplate:
     template = VMTemplate(
         pve_vmid=pve_vmid,
@@ -332,42 +335,17 @@ def _seed_lxc_template(
         resource_type="lxc",
         status=status,
         visibility=VMTemplateVisibility.global_,
+        student_requestable=student_requestable,
     )
     session.add(template)
     session.commit()
     return template
 
 
-def test_student_quick_template_is_limited_and_auto_approved(
-    db: Session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_legacy_quick_template_mode_is_rejected(db: Session) -> None:
+    """舊的自助模式會自動核准，已停用；學生只能走快速練習或一般申請。"""
     user = _create_user(db, role=UserRole.student)
     _seed_lxc_template(db, pve_vmid=9100)
-    calls: list[uuid.UUID] = []
-
-    monkeypatch.setattr(
-        "app.services.vm.vm_request_service.vm_request_availability_service.validate_request_window",
-        lambda **kwargs: None,
-    )
-
-    def fake_approve_and_place(*, session: Session, db_request: VMRequest, reviewer_id: uuid.UUID):
-        db_request.status = VMRequestStatus.approved
-        db_request.reviewer_id = reviewer_id
-        db_request.assigned_node = "pve-a"
-        db_request.desired_node = "pve-a"
-        session.add(db_request)
-        session.flush()
-        return None
-
-    monkeypatch.setattr(
-        "app.services.vm.vm_request_service._approve_and_place",
-        fake_approve_and_place,
-    )
-    monkeypatch.setattr(
-        "app.services.vm.vm_request_service.submit_sync",
-        lambda _fn, request_id, **_kwargs: calls.append(request_id),
-    )
-
     request_in = VMRequestCreate(
         reason="Need a short PostgreSQL lab environment",
         resource_type="lxc",
@@ -380,23 +358,14 @@ def test_student_quick_template_is_limited_and_auto_approved(
         mode="quick_template",
     )
 
-    result = vm_request_service.create(session=db, request_in=request_in, user=user)
-
-    db.expire_all()
-    saved = db.exec(select(VMRequest).where(VMRequest.id == result.id)).first()
-    assert saved is not None
-    assert result.request_kind == "quick_template"
-    assert saved.request_kind == "quick_template"
-    assert saved.status == VMRequestStatus.approved
-    assert saved.template_id == 9100
-    assert saved.start_at is not None
-    assert saved.end_at is not None
-    assert saved.end_at - saved.start_at == timedelta(hours=3)
-    assert calls == [saved.id]
+    with pytest.raises(BadRequestError, match="已停用"):
+        vm_request_service.create(session=db, request_in=request_in, user=user)
 
 
-def test_student_quick_template_requires_template(db: Session) -> None:
-    """quick_template 模式必須帶範本系統的 template_id（不再接受安裝腳本）。"""
+def test_legacy_quick_template_mode_is_rejected_without_a_template(
+    db: Session,
+) -> None:
+    """停用後不論帶不帶範本都不接受，錯誤訊息一致。"""
     user = _create_user(db, role=UserRole.student)
     request_in = VMRequestCreate(
         reason="Need a short lab without a template",
@@ -414,7 +383,9 @@ def test_student_quick_template_requires_template(db: Session) -> None:
         vm_request_service.create(session=db, request_in=request_in, user=user)
 
 
-def test_student_quick_template_rejects_not_ready_template(db: Session) -> None:
+def test_legacy_quick_template_mode_is_rejected_for_unready_templates(
+    db: Session,
+) -> None:
     user = _create_user(db, role=UserRole.student)
     _seed_lxc_template(db, pve_vmid=9200, status=VMTemplateStatus.creating)
     request_in = VMRequestCreate(
@@ -919,6 +890,11 @@ def test_select_request_placement_falls_back_when_reserved_node_is_unavailable(
     placement_request = SimpleNamespace()
 
     monkeypatch.setattr(
+        "app.services.proxmox.provisioning_service.placement_support"
+        ".allowed_template_nodes_for_request",
+        lambda request: None,
+    )
+    monkeypatch.setattr(
         "app.services.proxmox.provisioning_service.placement_advisor._load_cluster_state",
         lambda: ([], []),
     )
@@ -1078,6 +1054,12 @@ def test_reserved_target_node_prefers_admin_storage_profile(
                 candidate=True,
             ),
         ],
+    )
+    # 此測試只驗證管理員儲存設定的選點優先序；模板節點可見性另有專屬測試。
+    monkeypatch.setattr(
+        "app.services.vm.placement_service.placement_support"
+        ".allowed_template_nodes_for_request",
+        lambda request: None,
     )
 
     selection = vm_request_placement_service.select_reserved_target_node(
@@ -1275,8 +1257,8 @@ def test_create_vm_prefers_admin_selected_storage(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "app.services.proxmox.provisioning_service.get_proxmox_settings",
-        lambda: SimpleNamespace(pool_name="SkyLab"),
+        "app.services.proxmox.provisioning_service.get_proxmox_settings_for_node",
+        lambda _node: SimpleNamespace(pool_name="SkyLab"),
     )
 
     provisioning_service.create_vm(
@@ -1575,8 +1557,8 @@ def test_create_vm_uses_template_node_and_normalizes_disk_size(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "app.services.proxmox.provisioning_service.get_proxmox_settings",
-        lambda: SimpleNamespace(pool_name="SkyLab"),
+        "app.services.proxmox.provisioning_service.get_proxmox_settings_for_node",
+        lambda _node: SimpleNamespace(pool_name="SkyLab"),
     )
 
     result = provisioning_service.create_vm(
@@ -1663,8 +1645,8 @@ def test_create_vm_falls_back_when_requested_storage_is_unavailable(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "app.services.proxmox.provisioning_service.get_proxmox_settings",
-        lambda: SimpleNamespace(pool_name="SkyLab"),
+        "app.services.proxmox.provisioning_service.get_proxmox_settings_for_node",
+        lambda _node: SimpleNamespace(pool_name="SkyLab"),
     )
 
     provisioning_service.create_vm(
@@ -1729,23 +1711,39 @@ def test_delete_user_rejects_owned_resources(db: Session) -> None:
 
 
 def test_vm_templates_are_filtered_by_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """每個連線各自比對自己的 pool 名稱，不是共用一個。"""
     monkeypatch.setattr(
         "app.infrastructure.proxmox.operations.get_proxmox_settings",
-        type("Cfg", (), {"pool_name": "SkyLab"}),
+        lambda key=None: SimpleNamespace(
+            pool_name={1: "SkyLab", 2: "LabB"}.get(key, "SkyLab")
+        ),
     )
     monkeypatch.setattr(
-        "app.infrastructure.proxmox.operations._raw_vms",
+        "app.infrastructure.proxmox.operations._raw_vms_by_connection",
         lambda: [
-            {"vmid": 100, "name": "allowed", "node": "node-a", "template": 1, "pool": "SkyLab"},
-            {"vmid": 101, "name": "blocked", "node": "node-b", "template": 1, "pool": "OtherPool"},
-            {"vmid": 102, "name": "not-template", "node": "node-c", "template": 0, "pool": "SkyLab"},
+            (
+                1,
+                [
+                    {"vmid": 100, "name": "allowed", "node": "node-a", "template": 1, "pool": "SkyLab"},
+                    {"vmid": 101, "name": "blocked", "node": "node-b", "template": 1, "pool": "OtherPool"},
+                    {"vmid": 102, "name": "not-template", "node": "node-c", "template": 0, "pool": "SkyLab"},
+                ],
+            ),
+            (
+                2,
+                [
+                    {"vmid": 200, "name": "allowed-b", "node": "node-d", "template": 1, "pool": "LabB"},
+                    {"vmid": 201, "name": "blocked-b", "node": "node-e", "template": 1, "pool": "SkyLab"},
+                ],
+            ),
         ],
     )
 
     templates = proxmox_service.get_vm_templates()
 
     assert templates == [
-        {"vmid": 100, "name": "allowed", "node": "node-a", "template": 1, "pool": "SkyLab"}
+        {"vmid": 100, "name": "allowed", "node": "node-a", "template": 1, "pool": "SkyLab"},
+        {"vmid": 200, "name": "allowed-b", "node": "node-d", "template": 1, "pool": "LabB"},
     ]
 
 

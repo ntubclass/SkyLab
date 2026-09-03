@@ -5,9 +5,11 @@ import MIcon from "../../../components/MIcon";
 import Avatar from "../../../components/Avatar/Avatar";
 import { useAuth } from "../../../contexts/AuthContext";
 import { useToast } from "../../../hooks/useToast";
+import useDialogPresence from "../../../hooks/useDialogPresence";
 import { AccountService } from "../../../services/account";
 import { downscaleImage } from "../../../utils/image/downscaleImage";
 import AppearanceTab from "./AppearanceTab";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 const TABS = [
   { key: "profile",    label: "個人資料", icon: "person" },
@@ -273,6 +275,7 @@ function DangerZoneTab() {
   const { logout } = useAuth();
   const toast = useToast();
   const [showConfirm, setShowConfirm] = useState(false);
+  const confirmDialog = useDialogPresence(showConfirm);
   const [confirmText, setConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
 
@@ -293,7 +296,7 @@ function DangerZoneTab() {
       <div className={`${styles.card} ${styles.dangerCard}`}>
         <h2 className={styles.cardTitle}>刪除帳號</h2>
         <p className={styles.dangerDesc}>
-          你的帳號與所有相關資料將被<strong>永久刪除</strong>，此操作無法復原。若你仍持有已開通的資源，後端會拒絕刪除，請先清除資源。
+          你的帳號與所有相關資料將被<strong>永久刪除</strong>，此操作無法復原。若你仍持有已開通的資源，系統會拒絕刪除，請先清除資源。
         </p>
         <div className={styles.formActions}>
           <button type="button" className={styles.btnDanger} onClick={() => setShowConfirm(true)}>
@@ -303,11 +306,14 @@ function DangerZoneTab() {
         </div>
       </div>
 
-      {showConfirm && createPortal(
+      {confirmDialog.open && createPortal(
         /* 用 portal 掛到 document.body：避免 Modal 巢狀在有 backdrop-filter 的 .dangerCard
            底下 —— backdrop-filter 會讓後代的 position:fixed 失去「相對整個視窗定位」的能力，
            變成只覆蓋卡片自己的範圍（CSS containing block 陷阱）。 */
-        <div className={styles.modalOverlay} onMouseDown={() => !deleting && setShowConfirm(false)}>
+        <div
+          className={`${styles.modalOverlay} ${confirmDialog.closing ? styles.modalOverlayOut : ""}`}
+          onMouseDown={() => !deleting && setShowConfirm(false)}
+        >
           <div className={styles.confirm} onMouseDown={(e) => e.stopPropagation()}>
             <div className={styles.confirmIcon}>
               <MIcon name="warning" size={24} />
@@ -356,12 +362,7 @@ export default function AccountSettingsPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>帳號設定</h1>
-          <p className={styles.pageSubtitle}>管理你的個人資料、密碼、外觀與帳號安全</p>
-        </div>
-      </div>
+      <PageHeader title="帳號設定" subtitle="管理你的個人資料、密碼、外觀與帳號安全" />
 
       <div className={styles.tabs}>
         {TABS.map((tab) => (

@@ -1,4 +1,4 @@
-"""資源配額 API：admin 管理群組/個人配額；所有登入者查自己用量。"""
+"""資源配額 API：admin 管理個人配額；所有登入者查自己用量。"""
 
 import logging
 import uuid
@@ -8,9 +8,11 @@ from sqlmodel import select
 
 from app.api.deps import AdminUser, CurrentUser, SessionDep
 from app.exceptions import ConflictError, NotFoundError
-from app.models import AuditAction, Group, QuotaScope, ResourceQuota, User
+from app.models import AuditAction, ResourceQuota, User
 from app.schemas import (
     EffectiveQuotaPublic,
+    GlobalQuotaPublic,
+    GlobalQuotaUpdate,
     QuotaUsagePublic,
     ResourceQuotaCreate,
     ResourceQuotaPublic,
@@ -26,20 +28,11 @@ router = APIRouter(prefix="/quotas", tags=["quotas"])
 
 
 def _to_public(session: SessionDep, quota: ResourceQuota) -> ResourceQuotaPublic:
-    group_name = None
-    user_email = None
-    if quota.group_id is not None:
-        group = session.get(Group, quota.group_id)
-        group_name = group.name if group else None
-    if quota.user_id is not None:
-        user = session.get(User, quota.user_id)
-        user_email = user.email if user else None
+    user = session.get(User, quota.user_id)
+    user_email = user.email if user else None
     return ResourceQuotaPublic(
         id=quota.id,
-        scope=quota.scope,
-        group_id=quota.group_id,
         user_id=quota.user_id,
-        group_name=group_name,
         user_email=user_email,
         max_cpu_cores=quota.max_cpu_cores,
         max_memory_mb=quota.max_memory_mb,
@@ -67,6 +60,30 @@ def get_my_usage(session: SessionDep, current_user: CurrentUser) -> QuotaUsagePu
     )
 
 
+# NOTE: /global 必須註冊在 /{quota_id} 之前，否則會先被當成 quota_id
+# 解析成 UUID 而失敗（422）。
+@router.get("/global", response_model=GlobalQuotaPublic)
+def get_global_quota(session: SessionDep, _: AdminUser) -> GlobalQuotaPublic:
+    config = quota_service.get_global_quota(session)
+    return GlobalQuotaPublic.model_validate(config, from_attributes=True)
+
+
+@router.put("/global", response_model=GlobalQuotaPublic)
+def update_global_quota(
+    body: GlobalQuotaUpdate, session: SessionDep, current_user: AdminUser
+) -> GlobalQuotaPublic:
+    config = quota_service.update_global_quota(
+        session, body.model_dump(exclude_unset=True)
+    )
+    audit_service.log_action(
+        session=session,
+        user_id=current_user.id,
+        action=AuditAction.config_update,
+        details="Updated global default quota",
+    )
+    return GlobalQuotaPublic.model_validate(config, from_attributes=True)
+
+
 @router.get("", response_model=list[ResourceQuotaPublic])
 def list_quotas(session: SessionDep, _: AdminUser) -> list[ResourceQuotaPublic]:
     quotas = session.exec(select(ResourceQuota)).all()
@@ -77,25 +94,16 @@ def list_quotas(session: SessionDep, _: AdminUser) -> list[ResourceQuotaPublic]:
 def create_quota(
     body: ResourceQuotaCreate, session: SessionDep, current_user: AdminUser
 ) -> ResourceQuotaPublic:
-    if body.scope == QuotaScope.group:
-        if session.get(Group, body.group_id) is None:
-            raise NotFoundError("Group not found")
-        existing = session.exec(
-            select(ResourceQuota).where(ResourceQuota.group_id == body.group_id)
-        ).first()
-    else:
-        if session.get(User, body.user_id) is None:
-            raise NotFoundError("User not found")
-        existing = session.exec(
-            select(ResourceQuota).where(ResourceQuota.user_id == body.user_id)
-        ).first()
+    if session.get(User, body.user_id) is None:
+        raise NotFoundError("User not found")
+    existing = session.exec(
+        select(ResourceQuota).where(ResourceQuota.user_id == body.user_id)
+    ).first()
     if existing is not None:
         raise ConflictError("此對象已有配額設定，請改用更新")
 
     quota = ResourceQuota(
-        scope=body.scope,
-        group_id=body.group_id if body.scope == QuotaScope.group else None,
-        user_id=body.user_id if body.scope == QuotaScope.user else None,
+        user_id=body.user_id,
         max_cpu_cores=body.max_cpu_cores,
         max_memory_mb=body.max_memory_mb,
         max_disk_gb=body.max_disk_gb,
@@ -106,8 +114,7 @@ def create_quota(
         session=session,
         user_id=current_user.id,
         action=AuditAction.config_update,
-        details=f"Created {body.scope.value} quota for "
-        f"{body.group_id or body.user_id}",
+        details=f"Created user quota for {body.user_id}",
         commit=False,
     )
     session.commit()

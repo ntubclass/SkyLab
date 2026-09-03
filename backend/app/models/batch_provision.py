@@ -27,17 +27,17 @@ class BatchProvisionTaskStatus(str, enum.Enum):
 
 
 class BatchProvisionJob(SQLModel, table=True):
-    """批量建立工作（一個群組一次操作）"""
+    """正式班級的批量建立工作。"""
 
     __tablename__ = "batch_provision_jobs"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    group_id: uuid.UUID = Field(
+    teaching_class_id: uuid.UUID = Field(
         sa_column=Column(
-            sa.ForeignKey("group.id", ondelete="CASCADE"),
+            sa.ForeignKey("teaching_classes.id", ondelete="CASCADE"),
             nullable=False,
             index=True,
-        )
+        ),
     )
     initiated_by: uuid.UUID = Field(
         sa_column=Column(
@@ -85,6 +85,14 @@ class BatchProvisionJob(SQLModel, table=True):
     recurrence_rule: str | None = Field(default=None)
     recurrence_duration_minutes: int | None = Field(default=None)
     schedule_timezone: str | None = Field(default=None)
+    next_window_start: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
+    )
+    next_window_end: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
 
 
 class BatchProvisionTask(SQLModel, table=True):

@@ -3,13 +3,14 @@ import styles from "./Teaching.module.scss";
 import { QuotasService } from "../../services/quotas";
 
 function Meter({ label, used, max, unit }) {
-  const pct = max > 0 ? Math.min(100, (used / max) * 100) : 0;
+  const unlimited = max === 0;
+  const pct = !unlimited && max > 0 ? Math.min(100, (used / max) * 100) : 0;
   return (
     <div className={styles.meter}>
       <div className={styles.meterHead}>
         <span className={styles.meterLabel}>{label}</span>
         <span className={`${styles.meterValue} ${pct >= 90 ? styles.meterValue_over : ""}`}>
-          {used} / {max} {unit}
+          {unlimited ? `${used} ${unit}（無限制）` : `${used} / ${max} ${unit}`}
         </span>
       </div>
       <div className={styles.meterTrack}>
@@ -37,7 +38,7 @@ export default function QuotaUsageBar() {
   if (!data) return null;
 
   return (
-    <div className={styles.card}>
+    <div className={styles.card} data-guide="resource-quota">
       <div className={styles.meterGrid}>
         <Meter
           label="CPU"

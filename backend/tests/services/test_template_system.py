@@ -16,7 +16,8 @@ from typing import Any
 import pytest
 
 from app.exceptions import ConflictError, PermissionDeniedError
-from app.models import VMTemplate, VMTemplateStatus
+from app.models import VMTemplate, VMTemplateStatus, VMTemplateVisibility
+from app.repositories import vm_template as template_repo
 from app.services.proxmox import provisioning_service
 from app.services.template import clone_service, template_service
 
@@ -46,8 +47,8 @@ def make_template(
 def fake_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         clone_service,
-        "get_proxmox_settings",
-        lambda: SimpleNamespace(pool_name="testpool"),
+        "get_proxmox_settings_for_node",
+        lambda node: SimpleNamespace(pool_name="testpool"),
     )
 
 
@@ -275,8 +276,32 @@ def test_list_templates_student_sees_only_ready(
     assert rbac_repo["only_ready"] is True
 
 
+def test_private_template_is_visible_only_to_owner() -> None:
+    owner = make_user("teacher")
+    template = make_template(owner_id=owner.id)
+    template.visibility = VMTemplateVisibility.private
+
+    assert template_repo.is_template_visible_to_user(
+        template=template, user_id=owner.id
+    )
+    assert not template_repo.is_template_visible_to_user(
+        template=template,
+        user_id=uuid.uuid4(),
+    )
+
+
+def test_global_template_is_visible_to_other_users() -> None:
+    template = make_template(owner_id=uuid.uuid4())
+    template.visibility = VMTemplateVisibility.global_
+
+    assert template_repo.is_template_visible_to_user(
+        template=template,
+        user_id=uuid.uuid4(),
+    )
+
+
 # ---------------------------------------------------------------------------
-# request_clone：學生配額與批量權限
+# request_clone：學生禁止直接克隆，教師可批量
 # ---------------------------------------------------------------------------
 
 
@@ -292,41 +317,18 @@ def visible_template(monkeypatch: pytest.MonkeyPatch) -> VMTemplate:
     return template
 
 
-async def test_request_clone_student_batch_denied(
-    visible_template: VMTemplate,
+@pytest.mark.parametrize("count", [1, 2])
+async def test_request_clone_student_denied(
+    visible_template: VMTemplate, count: int
 ) -> None:
     from app.schemas.template import TemplateCloneRequest
 
-    with pytest.raises(PermissionDeniedError, match="batch"):
+    with pytest.raises(PermissionDeniedError, match="teachers and admins"):
         await clone_service.request_clone(
             session=None,  # type: ignore[arg-type]
             user=make_user("student"),
             template_id=visible_template.id,
-            data=TemplateCloneRequest(count=2),
-        )
-
-
-async def test_request_clone_student_quota_exceeded(
-    visible_template: VMTemplate, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from app.core.config import settings
-    from app.schemas.template import TemplateCloneRequest
-
-    monkeypatch.setattr(
-        clone_service.resource_repo,
-        "get_resources_by_user",
-        lambda *, session, user_id: [
-            SimpleNamespace(vmid=i)
-            for i in range(settings.TEMPLATE_CLONE_STUDENT_MAX_INSTANCES)
-        ],
-    )
-
-    with pytest.raises(ConflictError, match="quota"):
-        await clone_service.request_clone(
-            session=None,  # type: ignore[arg-type]
-            user=make_user("student"),
-            template_id=visible_template.id,
-            data=TemplateCloneRequest(count=1),
+            data=TemplateCloneRequest(count=count),
         )
 
 
@@ -378,3 +380,101 @@ async def test_request_clone_rejects_not_ready_template(
             template_id=template.id,
             data=TemplateCloneRequest(count=1),
         )
+
+
+# ---------------------------------------------------------------------------
+# convert 前清快照（PVE 拒絕帶快照的 CT 轉範本；qemu 也一併清）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("resource_type", ["lxc", "qemu"])
+def test_remove_snapshots_for_convert_deletes_snapshots_newest_first(
+    monkeypatch: pytest.MonkeyPatch, resource_type: str
+) -> None:
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        template_service.proxmox_ops,
+        "list_snapshots",
+        lambda node, vmid, rt: [
+            {"name": "old", "snaptime": 100},
+            {"name": "current"},  # PVE 的偽快照，不可刪
+            {"name": "new", "snaptime": 200},
+        ],
+    )
+    monkeypatch.setattr(
+        template_service.proxmox_ops,
+        "delete_snapshot",
+        lambda node, vmid, rt, snapname: deleted.append(snapname),
+    )
+
+    template_service._remove_snapshots_for_convert("pve1", 9001, resource_type)
+
+    assert deleted == ["new", "old"]
+# ---------------------------------------------------------------------------
+# _strip_hostpci_for_convert：轉範本前剝離 GPU 直通
+# ---------------------------------------------------------------------------
+
+
+def test_strip_hostpci_deletes_all_present_slots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        template_service.proxmox_ops,
+        "get_config",
+        lambda node, vmid, rt: {
+            "hostpci0": "mapping=h200-gpu,mdev=nvidia-1028",
+            "hostpci2": "0000:81:00.0,pcie=1",
+            "net0": "virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr1",
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_update_config(node: str, vmid: int, rt: str, **params: Any) -> None:
+        captured.update(params)
+
+    monkeypatch.setattr(
+        template_service.proxmox_ops, "update_config", fake_update_config
+    )
+
+    template_service._strip_hostpci_for_convert("pve1", 9001, "qemu")
+
+    # 稀疏槽位（0 與 2）都要刪到，非 hostpci 鍵不受影響
+    assert captured["delete"] == "hostpci0,hostpci2"
+
+
+def test_strip_hostpci_skips_lxc(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*a: Any, **kw: Any) -> None:
+        raise AssertionError("lxc must not touch PVE config")
+
+    monkeypatch.setattr(template_service.proxmox_ops, "get_config", boom)
+
+    template_service._strip_hostpci_for_convert("pve1", 9001, "lxc")
+
+
+def test_strip_hostpci_noop_without_devices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        template_service.proxmox_ops,
+        "get_config",
+        lambda node, vmid, rt: {"net0": "virtio=AA:BB:CC:DD:EE:FF"},
+    )
+
+    def boom(*a: Any, **kw: Any) -> None:
+        raise AssertionError("update_config must not be called without hostpci")
+
+    monkeypatch.setattr(template_service.proxmox_ops, "update_config", boom)
+
+    template_service._strip_hostpci_for_convert("pve1", 9001, "qemu")
+
+
+def test_strip_hostpci_tolerates_pve_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(template_service.proxmox_ops, "get_config", boom)
+
+    # best-effort：PVE 連不上只記 warning，不得拋出
+    template_service._strip_hostpci_for_convert("pve1", 9001, "qemu")

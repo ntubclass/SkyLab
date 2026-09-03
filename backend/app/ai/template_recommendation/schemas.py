@@ -98,9 +98,12 @@ class GPUOptionContext(BaseModel):
     node: str = ""
     available_count: int = 0
     device_count: int = 0
+    capacity_count: int = 0
     used_count: int = 0
     total_vram_mb: int = 0
     used_vram_mb: int = 0
+    per_instance_vram_mb: int = 0
+    mdev_profile: str = ""
     has_mdev: bool = False
     is_sriov: bool = False
 
@@ -129,7 +132,6 @@ class RecommendationFormContext(BaseModel):
     mode: Literal["immediate", "scheduled"] | None = None
     hostname: str | None = None
     reason: str | None = None
-    service_template_slug: str | None = None
     lxc_os_image: str | None = None
     vm_template_id: int | None = None
     username: str | None = None
@@ -153,6 +155,11 @@ class ChatRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=10)
     device_nodes: list[DeviceNode] = Field(default_factory=list)
     form_context: RecommendationFormContext | None = None
+    focus_hint: str | None = Field(
+        default=None,
+        max_length=200,
+        description="配置模式：這一輪只問這件事，其餘照原本的顧問語氣。",
+    )
 
 
 

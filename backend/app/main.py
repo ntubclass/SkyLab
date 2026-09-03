@@ -8,8 +8,12 @@ from contextlib import asynccontextmanager
 # 解法：在 uvicorn 載入 app 之前 patch 其 loop factory，強制回傳 SelectorEventLoop。
 if sys.platform == "win32":
     import uvicorn.loops.asyncio as _uvicorn_asyncio_loop
-    def _win_selector_factory(use_subprocess: bool = False) -> type[asyncio.SelectorEventLoop]:
+
+    def _win_selector_factory(
+        use_subprocess: bool = False,
+    ) -> type[asyncio.SelectorEventLoop]:
         return asyncio.SelectorEventLoop
+
     _uvicorn_asyncio_loop.asyncio_loop_factory = _win_selector_factory
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -38,6 +42,7 @@ from app.infrastructure.ai import close_ai_clients
 from app.infrastructure.queue import close_arq_pool, init_arq_pool
 from app.infrastructure.redis import close_redis, init_redis
 from app.infrastructure.worker import init_background_runner, shutdown_background_runner
+from app.services.network import wireguard_service
 from app.services.scheduling import vm_request_schedule_service
 
 _SECURITY_HEADERS: list[tuple[str, str]] = [
@@ -91,47 +96,16 @@ class SecurityHeadersMiddleware:
                         continue
                     headers.append((name.lower().encode(), value.encode()))
                 if settings.ENVIRONMENT == "production":
-                    headers.append((
-                        b"strict-transport-security",
-                        b"max-age=31536000; includeSubDomains",
-                    ))
+                    headers.append(
+                        (
+                            b"strict-transport-security",
+                            b"max-age=31536000; includeSubDomains",
+                        )
+                    )
                 message = {**message, "headers": headers}
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
-
-
-def _recover_orphan_running_deploys() -> None:
-    """將上次重啟前未完成的部署任務標記為 failed，避免永久卡在「執行中」。"""
-    import logging
-
-    from sqlmodel import Session, select
-
-    from app.core.db import engine
-    from app.models.base import get_datetime_utc
-    from app.models.script_deploy_log import ScriptDeployLog
-
-    _log = logging.getLogger(__name__)
-    try:
-        with Session(engine) as session:
-            orphans = session.exec(
-                select(ScriptDeployLog).where(ScriptDeployLog.status == "running")
-            ).all()
-            if not orphans:
-                return
-            for log in orphans:
-                log.status = "failed"
-                log.error = (log.error or "") + "\n[系統] 伺服器重啟，部署中斷"
-                log.progress = "已中斷（伺服器重啟）"
-                log.updated_at = get_datetime_utc()
-                log.completed_at = get_datetime_utc()
-                session.add(log)
-            session.commit()
-            _log.warning(
-                "啟動清理：將 %d 筆殘留 running 部署任務標記為 failed", len(orphans)
-            )
-    except Exception:
-        _log.exception("啟動清理孤兒部署任務失敗（非致命）")
 
 
 @asynccontextmanager
@@ -144,13 +118,20 @@ async def lifespan(app: FastAPI):
     )
     await init_redis()
     await init_arq_pool()
-    _recover_orphan_running_deploys()
     init_background_runner()
     stop_event = asyncio.Event()
     scheduler_task: asyncio.Task[None] | None = None
+    wireguard_task: asyncio.Task[None] | None = None
     if settings.SCHEDULER_ENABLED:
         scheduler_task = asyncio.create_task(
             vm_request_schedule_service.run_scheduler(stop_event)
+        )
+    if (
+        settings.DESKTOP_TUNNEL_MODE == "wireguard"
+        and settings.WIREGUARD_RECONCILE_ENABLED
+    ):
+        wireguard_task = asyncio.create_task(
+            wireguard_service.run_reconciler(stop_event)
         )
     try:
         yield
@@ -162,6 +143,12 @@ async def lifespan(app: FastAPI):
                 await scheduler_task
             except asyncio.CancelledError:
                 # 排程器取消屬預期的關閉流程
+                pass
+        if wireguard_task is not None:
+            wireguard_task.cancel()
+            try:
+                await wireguard_task
+            except asyncio.CancelledError:
                 pass
         await shutdown_background_runner()
         await close_ai_clients()
@@ -221,7 +208,9 @@ async def websocket_vnc_proxy(
     vnc_ticket: str = "",
     vnc_port: str = "",
 ):
-    await vnc_proxy(websocket, vmid, token=token, vnc_ticket=vnc_ticket, vnc_port=vnc_port)
+    await vnc_proxy(
+        websocket, vmid, token=token, vnc_ticket=vnc_ticket, vnc_port=vnc_port
+    )
 
 
 @app.websocket("/ws/terminal/{vmid}")

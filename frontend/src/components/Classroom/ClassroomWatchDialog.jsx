@@ -11,13 +11,11 @@ import { useToast } from "../../hooks/useToast";
  * 教室觀看視窗：連 /ws/classroom/{session_id}/watch 的原生 RFB 資料面
  * （下游 security=None，不需 VNC ticket）。
  * - canControl：monitor 模式發起者可「接管/釋放」
- * - pair：協作模式雙方皆可輸入，不走接管流程
  */
 export default function ClassroomWatchDialog({
   sessionId,
   title,
   canControl = false,
-  pair = false,
   onClose,
 }) {
   const toast = useToast();
@@ -25,6 +23,7 @@ export default function ClassroomWatchDialog({
   const [connected, setConnected] = useState(false);
   const [controlling, setControlling] = useState(false);
   const [controlBusy, setControlBusy] = useState(false);
+  const [closing, setClosing] = useState(false);
 
   useEffect(() => () => {
     // 卸載時保險斷線
@@ -36,8 +35,7 @@ export default function ClassroomWatchDialog({
     ? `${wsBaseUrl()}/ws/classroom/${sessionId}/watch?token=${encodeURIComponent(token)}`
     : "";
 
-  // pair：雙方輸入都由後端放行；否則老師接管中才允許輸入
-  const viewOnly = pair ? false : !(canControl && controlling);
+  const viewOnly = !(canControl && controlling);
 
   const handleControl = async () => {
     const action = controlling ? "release" : "take";
@@ -53,16 +51,19 @@ export default function ClassroomWatchDialog({
   };
 
   const handleClose = () => {
+    if (closing) return;
     // 關閉前先釋放控制權，避免學生端持續被鎖定
     if (canControl && controlling && sessionId) {
       ClassroomService.setControl(sessionId, "release").catch(() => {});
     }
     vncRef.current?.disconnect?.();
-    onClose();
+    // 先播放離場動畫，再通知父層卸載
+    setClosing(true);
+    setTimeout(onClose, 150);
   };
 
   return (
-    <div className={styles.overlay} onClick={handleClose}>
+    <div className={`${styles.overlay} ${closing ? styles.overlayOut : ""}`} onClick={handleClose}>
       <div className={styles.dialog} onClick={(e) => e.stopPropagation()}>
         <div className={styles.header}>
           <span className={styles.headerIcon}>

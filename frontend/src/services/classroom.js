@@ -2,14 +2,17 @@ import { apiDelete, apiGet, apiPost } from "./api";
 
 /** 虛擬教室：session 管理走 REST，信令與觀看資料面走 WS（見 ClassroomStudentLayer / WatchDialog）。 */
 export const ClassroomService = {
-  /** 群組學生清單（含 VM 狀態，教師/管理員） */
-  listStudents(groupId) {
-    return apiGet(`/api/v1/classroom/groups/${groupId}/students`);
+  listClassStudents(classId) {
+    return apiGet(`/api/v1/classroom/classes/${classId}/students`);
   },
 
-  /** 開啟 session（mode: "broadcast" 需帶 group_id；"monitor" 只看單台） */
-  createSession({ vmid, mode, group_id = null }) {
-    return apiPost("/api/v1/classroom/sessions", { vmid, mode, group_id });
+  listClassBroadcastSources(classId) {
+    return apiGet(`/api/v1/classroom/classes/${classId}/broadcast-sources`);
+  },
+
+  /** 開啟正式班級 session。 */
+  createSession({ vmid, mode, class_id }) {
+    return apiPost("/api/v1/classroom/sessions", { vmid, mode, class_id });
   },
 
   /** 結束 session */

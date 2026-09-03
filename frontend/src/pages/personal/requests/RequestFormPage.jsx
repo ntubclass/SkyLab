@@ -1,6 +1,6 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./RequestFormPage.module.scss";
-import { LayoutContext } from "../../../layout/DashboardLayout";
+import { LayoutContext } from "../../../layout/layoutContext";
 import { useAuth } from "../../../contexts/AuthContext";
 import { useToast } from "../../../hooks/useToast";
 import { VmRequestsService } from "../../../services/vmRequests";
@@ -8,9 +8,10 @@ import { VmRequestAvailabilityService } from "../../../services/vmRequestAvailab
 import { GpuService } from "../../../services/gpu";
 import { TemplatesService } from "../../../services/templates";
 import { apiGet } from "../../../services/api";
-import AiSidePanel from "./AiSidePanel";
 import AvailabilityPanel from "../../../components/AvailabilityPanel/AvailabilityPanel";
 import MIcon from "../../../components/MIcon";
+import PageHeader from "../../../components/PageHeader/PageHeader";
+import { focusInvalidField } from "../../../utils/focusField";
 
 /* Hostname normalization — preserves alphanumeric, replaces others with hyphen */
 function normalizeHostname(value) {
@@ -23,9 +24,9 @@ function normalizeHostname(value) {
 }
 
 /* ── Form field primitives ── */
-function FieldGroup({ label, hint, required, error, children, labelRight }) {
+function FieldGroup({ label, hint, required, error, children, labelRight, name }) {
   return (
-    <div className={styles.formGroup}>
+    <div className={`${styles.formGroup} ${error ? styles.formGroupInvalid : ""}`} data-field={name}>
       <label className={styles.label}>
         <span>
           {label}
@@ -62,7 +63,41 @@ const formatDateOnly = (iso) => new Date(iso).toLocaleDateString("zh-TW", {
   month: "2-digit",
   day: "2-digit",
 });
-const formatOstemplate = (v) => v.split("/").pop()?.replace(".tar.zst", "") ?? v;
+const OS_DISPLAY_NAMES = {
+  ubuntu: "Ubuntu",
+  debian: "Debian",
+  alpine: "Alpine",
+  centos: "CentOS",
+  rockylinux: "Rocky Linux",
+  almalinux: "AlmaLinux",
+  fedora: "Fedora",
+  archlinux: "Arch Linux",
+  opensuse: "openSUSE",
+  gentoo: "Gentoo",
+  devuan: "Devuan",
+  nixos: "NixOS",
+};
+/* 範本名稱結尾加上 -GPU 代表此作業系統需要 GPU */
+const GPU_MARKER_RE = /-gpu$/i;
+const osNameNeedsGpu = (name) => GPU_MARKER_RE.test(String(name ?? "").trim());
+const stripGpuMarker = (name) => String(name ?? "").trim().replace(GPU_MARKER_RE, "");
+const withGpuTag = (label, needsGpu) => (needsGpu ? `${label}（需 GPU）` : label);
+const parseLxcImage = (v) => {
+  const file = v.split("/").pop() ?? v;
+  const base = file.replace(/\.tar\.(zst|gz|xz|bz2)$/, "");
+  // 檔名慣例：<distro>-<version>-<variant>_<build>_<arch>，如 ubuntu-22.04-standard_22.04-1_amd64
+  // -GPU 可加在副檔名前或版本段前：..._amd64-GPU.tar.zst / ubuntu-22.04-standard-GPU_...
+  const pkgRaw = base.split("_")[0];
+  const needsGpu = osNameNeedsGpu(base) || osNameNeedsGpu(pkgRaw);
+  const pkg = stripGpuMarker(pkgRaw).replace(/-(standard|default|base|minimal)$/, "");
+  const [distro, ...rest] = pkg.split("-");
+  const displayName = OS_DISPLAY_NAMES[distro.toLowerCase()];
+  const label = displayName
+    ? (rest.length ? `${displayName} ${rest.join(" ")}` : displayName)
+    : stripGpuMarker(base);
+  return { label, needsGpu };
+};
+const formatOstemplate = (v) => parseLxcImage(v).label;
 const toDateTimeLocalValue = (value) => {
   if (!value) return "";
   const date = value instanceof Date ? value : new Date(value);
@@ -87,12 +122,19 @@ const fromDateInputValue = (value, endOfDay = false) => {
   return date.toISOString();
 };
 const GPU_OPTIONS_DEBOUNCE_MS = 300;
+const ADVISE_DEBOUNCE_MS = 500;
+const formatVramMb = (mb) => (mb >= 1024 ? `${Number.isInteger(mb / 1024) ? mb / 1024 : (mb / 1024).toFixed(1)} GB` : `${mb} MB`);
 const gpuLabel = (gpu) => {
-  const vram = gpu.total_vram_mb > 0
-    ? ` (${gpu.total_vram_mb >= 1024 ? `${(gpu.total_vram_mb / 1024).toFixed(0)} GB` : `${gpu.total_vram_mb} MB`})`
-    : gpu.vram ? ` (${gpu.vram})` : "";
-  return `${gpu.description || gpu.mapping_id}${vram} [${gpu.available_count}/${gpu.device_count} 可用]${gpu.available_count <= 0 ? " — 已滿" : ""}`;
+  /* SR-IOV vGPU 以 framebuffer 可切數為上限（capacity_count），非 VF 插槽數 */
+  const capacity = gpu.capacity_count || gpu.device_count;
+  const parts = [];
+  if (gpu.per_instance_vram_mb > 0) parts.push(`${formatVramMb(gpu.per_instance_vram_mb)}/顆`);
+  if (gpu.total_vram_mb > 0) parts.push(`共 ${formatVramMb(gpu.total_vram_mb)}`);
+  else if (gpu.vram) parts.push(gpu.vram);
+  const vram = parts.length ? ` (${parts.join(", ")})` : "";
+  return `${gpu.description || gpu.mapping_id}${vram} [${gpu.available_count}/${capacity} 可用]${gpu.available_count <= 0 ? " — 已滿" : ""}`;
 };
+
 
 function buildAiScheduleOptions(availability) {
   const days = (availability?.days || [])
@@ -133,6 +175,19 @@ function buildAiScheduleOptions(availability) {
   return options.slice(0, 12);
 }
 
+/* 依畫面順序排列，送出時定位到第一個有問題的欄位 */
+const FIELD_ORDER = [
+  "hostname", "ostemplate", "template_id", "username", "password",
+  "gpu_mapping_id", "start_at", "end_at", "reason",
+];
+
+function focusFirstError(formEl, errs) {
+  const key = FIELD_ORDER.find((field) => errs[field]);
+  if (!key || !formEl) return;
+  const group = formEl.querySelector(`[data-field~="${key}"]`);
+  focusInvalidField(group?.querySelector("input, select, textarea"));
+}
+
 /* ── Validation messages（對齊舊版 zh-TW locales）── */
 const MSG = {
   hostnameRequired: "名稱為必填項",
@@ -141,8 +196,8 @@ const MSG = {
   passwordMinLen:   "密碼至少需要 8 個字符",
   reasonRequired:   "申請原因為必填項",
   reasonMinLen:     "申請原因至少需要 10 個字符",
-  templateRequired: "範本為必填項",
   osRequired:       "作業系統為必填項",
+  gpuRequired:      "此作業系統需要 GPU，請選擇一張 GPU",
   usernameRequired: "使用者名稱為必填項",
   startRequired:    "請選擇開始日期",
   endRequired:      "請選擇結束日期",
@@ -151,24 +206,29 @@ const MSG = {
   scheduleOutOfRange: "租借時段需在未來三個月內",
 };
 
-export default function RequestFormPage({ onBack, className }) {
+export default function RequestFormPage({ onBack, className, initialPrefill = null }) {
   const { user }  = useAuth();
   const toast     = useToast();
   const isPrivileged = user?.is_superuser || user?.role === "admin" || user?.role === "teacher";
-  const { setCompactFooter } = useContext(LayoutContext);
+  const { setCompactFooter, registerRequestForm } = useContext(LayoutContext);
   useEffect(() => { setCompactFooter(true); return () => setCompactFooter(false); }, [setCompactFooter]);
 
   const [closing, setClosing]   = useState(false);
-  const [aiOpen, setAiOpen]     = useState(false);
-  const [rightTab, setRightTab] = useState("ai");
 
   /* 範本系統 2.0：LXC 可選範本，選了走克隆路徑（免映像檔） */
   const [sysTemplates, setSysTemplates]   = useState([]);
+  /* 學生看到的是「開放申請」的應用範本目錄，不是完整母範本清單 */
+  const [catalog, setCatalog]             = useState([]);
   const [sysTplLoading, setSysTplLoading] = useState(false);
   const [selectedTplId, setSelectedTplId] = useState("");
 
   /* Form state */
   const [resourceType, setResourceType] = useState("lxc");
+  const [advice, setAdvice]                   = useState(null);
+  const [adviceLoading, setAdviceLoading]     = useState(false);
+  const [advisorDisabled, setAdvisorDisabled] = useState(false);
+  /* 自動模式的統一作業系統選擇；選了 OS 即決定型別（advise 退為提示） */
+  const [autoOsChoice, setAutoOsChoice]       = useState("");
   const [mode, setMode]                 = useState("scheduled");
   const [form, setForm] = useState({
     hostname:         "",
@@ -180,8 +240,8 @@ export default function RequestFormPage({ onBack, className }) {
     memory:           2048,
     rootfs_size:      8,
     disk_size:        20,
-    service_template_slug: "",
     gpu_mapping_id:   "",
+    gpu_mdev_profile: "",
     start_at:         "",
     end_at:           "",
     immediate_no_end: true,
@@ -207,6 +267,8 @@ export default function RequestFormPage({ onBack, className }) {
   const [vmTemplates, setVmTemplates]   = useState([]);
   const [vmLoading, setVmLoading]       = useState(false);
   const [gpuOptions, setGpuOptions]     = useState([]);
+  /* AI 建議的 GPU：等可用清單就緒才敢寫進表單（見下方 effect） */
+  const [pendingGpu, setPendingGpu]     = useState(null);
   const [gpuLoading, setGpuLoading]     = useState(false);
   const [gpuOptionsKey, setGpuOptionsKey] = useState("");
 
@@ -230,12 +292,78 @@ export default function RequestFormPage({ onBack, className }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    // 單機母範本只供教師／管理員組裝環境或建立管理用資源。
+    // 學生的一般申請仍可選擇平台提供的 VM/LXC 基礎映像，但不讀取
+    // VMTemplate 目錄，也不會取得直接克隆入口。
+    if (!isPrivileged) return;
     setSysTplLoading(true);
     TemplatesService.list()
       .then((res) => setSysTemplates(res?.data ?? []))
       .catch(() => {})
       .finally(() => setSysTplLoading(false));
-  }, []);
+  }, [isPrivileged]);
+
+  useEffect(() => {
+    // 學生／一般使用者：只拿教師標記「開放學生自行申請」的應用範本。
+    // 規格由範本決定，送出後仍走一般審核流程。
+    if (isPrivileged) return;
+    setSysTplLoading(true);
+    TemplatesService.catalog()
+      .then((res) => {
+        const rows = res?.data ?? [];
+        setCatalog(rows);
+        setSysTemplates(
+          rows
+            .filter((item) => item.resource_type === "lxc")
+            .map((item) => ({
+              id: item.id,
+              pve_vmid: item.pve_vmid,
+              name: item.name,
+              description: item.description,
+              resource_type: "lxc",
+              status: "ready",
+              version: item.version,
+              default_cores: item.cores,
+              default_memory: item.memory_mb,
+              default_disk: item.disk_gb,
+            })),
+        );
+      })
+      .catch(() => {})
+      .finally(() => setSysTplLoading(false));
+  }, [isPrivileged]);
+
+  /* 申請一律是單台；範本只是「來源」，VM 或 LXC 由範本本身決定 */
+  const catalogChoices = useMemo(
+    () => catalog.map((item) => ({
+      ...item,
+      choice: item.resource_type === "lxc"
+        ? `tpl:${item.id}`
+        : `vm:${item.pve_vmid}`,
+    })),
+    [catalog],
+  );
+
+  /* VM 選項 = 應用範本目錄 + 平台基礎映像（後端已依角色過濾清單） */
+  const catalogVmChoices = useMemo(
+    () => catalog
+      .filter((item) => item.resource_type !== "lxc")
+      .map((item) => ({
+        vmid: item.pve_vmid,
+        name: item.name,
+        node: item.node,
+        is_windows: item.is_windows,
+        cores: item.cores,
+        memory_mb: item.memory_mb,
+        disk_gb: item.disk_gb,
+        catalog: true,
+      })),
+    [catalog],
+  );
+  const vmChoices = useMemo(
+    () => [...catalogVmChoices, ...vmTemplates],
+    [catalogVmChoices, vmTemplates],
+  );
 
   const lxcSysTemplates = useMemo(
     () => sysTemplates.filter(
@@ -245,17 +373,59 @@ export default function RequestFormPage({ onBack, className }) {
   );
   const selectedTpl = lxcSysTemplates.find((t) => t.id === selectedTplId) || null;
 
-  const canLoadGpu = resourceType === "vm";
+  /* Windows 範本帳號由 cloudbase-init 固定（PVE 的 ciuser 對 Windows 無效），不開放自訂 */
+  const selectedVmTemplate =
+    vmChoices.find((t) => String(t.vmid) === String(form.template_id)) || null;
+  const isWindowsVm = resourceType === "vm" && Boolean(selectedVmTemplate?.is_windows);
+
+  /* 目前選到的應用範本：帶入建議規格並顯示說明；規格仍可調整，
+     但磁碟不得小於範本本身（克隆只能放大，後端會再守一次） */
+  const selectedCatalogItem = useMemo(() => catalogChoices.find((item) => (
+    item.resource_type === "lxc"
+      ? item.id === selectedTplId
+      : String(item.pve_vmid) === String(form.template_id)
+  )) ?? null, [catalogChoices, selectedTplId, form.template_id]);
+
+  /* 是否已完成作業系統選擇（型別確定後，帳密欄位才顯示） */
+  const osChosen = resourceType === "vm"
+    ? Boolean(form.template_id)
+    : Boolean(selectedTplId || form.ostemplate);
+
+  /* 所選作業系統是否標記需要 GPU（範本名稱 / 映像檔名結尾 -GPU） */
+  const selectedOsNeedsGpu = useMemo(() => {
+    if (resourceType === "vm") {
+      const tpl = vmChoices.find((t) => String(t.vmid) === String(form.template_id));
+      return tpl ? osNameNeedsGpu(tpl.name) : false;
+    }
+    if (selectedTplId) {
+      const tpl = lxcSysTemplates.find((t) => t.id === selectedTplId);
+      return tpl ? osNameNeedsGpu(tpl.name) : false;
+    }
+    return form.ostemplate ? parseLxcImage(form.ostemplate).needsGpu : false;
+  }, [resourceType, vmChoices, form.template_id, selectedTplId, lxcSysTemplates, form.ostemplate]);
+  const canLoadGpu = resourceType === "vm" && selectedOsNeedsGpu;
   const gpuWindowReady = Boolean(mode === "scheduled" && form.start_at && form.end_at);
+  const selectedGpuProfiles = useMemo(() => {
+    if (!form.gpu_mapping_id) return [];
+    const gpu = gpuOptions.find((g) => g.mapping_id === form.gpu_mapping_id);
+    return gpu?.profiles ?? [];
+  }, [gpuOptions, form.gpu_mapping_id]);
+
+  const smallestCreatableProfile = useMemo(() => {
+    const creatable = selectedGpuProfiles.filter((p) => p.creatable && p.vram_mb > 0);
+    if (creatable.length === 0) return null;
+    return creatable.reduce((min, p) => (p.vram_mb < min.vram_mb ? p : min));
+  }, [selectedGpuProfiles]);
+
   const gpuOptionsRequestKey = canLoadGpu
     ? `${mode}|${gpuWindowReady ? form.start_at : ""}|${gpuWindowReady ? form.end_at : ""}`
     : "";
 
   useEffect(() => {
-    if (resourceType !== "vm" && form.gpu_mapping_id) {
-      setForm((prev) => ({ ...prev, gpu_mapping_id: "" }));
+    if ((resourceType !== "vm" || !selectedOsNeedsGpu) && form.gpu_mapping_id) {
+      setForm((prev) => ({ ...prev, gpu_mapping_id: "", gpu_mdev_profile: "" }));
     }
-  }, [resourceType, form.gpu_mapping_id]);
+  }, [resourceType, selectedOsNeedsGpu, form.gpu_mapping_id]);
 
   useEffect(() => {
     if (!canLoadGpu) {
@@ -303,7 +473,7 @@ export default function RequestFormPage({ onBack, className }) {
     if (gpuOptionsKey !== gpuOptionsRequestKey) return;
     const selected = gpuOptions.find((gpu) => gpu.mapping_id === form.gpu_mapping_id);
     if (!selected || selected.available_count <= 0) {
-      setForm((prev) => ({ ...prev, gpu_mapping_id: "" }));
+      setForm((prev) => ({ ...prev, gpu_mapping_id: "", gpu_mdev_profile: "" }));
     }
   }, [
     canLoadGpu,
@@ -317,17 +487,58 @@ export default function RequestFormPage({ onBack, className }) {
     gpuOptionsRequestKey,
   ]);
 
+  /* ── 自動判斷：依申請原因/規格即時呼叫 advise，自動切換建議型別 ── */
+  useEffect(() => {
+    if (advisorDisabled) return undefined;
+    const reasonText = form.reason.trim();
+    if (!reasonText && !form.gpu_mapping_id) {
+      setAdvice(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      setAdviceLoading(true);
+      VmRequestsService.advise({
+        reason: reasonText || null,
+        cores: Number(form.cores) || null,
+        memory: Number(form.memory) || null,
+        gpu_mapping_id: form.gpu_mapping_id || null,
+      })
+        .then((res) => {
+          if (cancelled) return;
+          setAdvice(res);
+          /* 已選作業系統時型別由 OS 決定，advise 僅作提示 */
+          if (!autoOsChoice) setResourceType(res.resource_type);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          /* 管理員停用 advisor 時後端回 400：隱藏自動選項並退回手動 */
+          if (err?.status === 400) {
+            setAdvisorDisabled(true);
+            setAdvice(null);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setAdviceLoading(false);
+        });
+    }, ADVISE_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [advisorDisabled, autoOsChoice, form.reason, form.cores, form.memory, form.gpu_mapping_id]);
+
   function set(key, val) {
     setForm((prev) => ({ ...prev, [key]: val }));
     if (errors[key]) setErrors((prev) => ({ ...prev, [key]: "" }));
   }
+
 
   const recommendationContext = useMemo(() => ({
     resource_type: resourceType,
     mode,
     hostname: form.hostname || null,
     reason: form.reason || null,
-    service_template_slug: form.service_template_slug || null,
     lxc_os_image: resourceType === "lxc" ? form.ostemplate || null : null,
     vm_template_id: resourceType === "vm" && form.template_id ? Number(form.template_id) : null,
     cores: Number(form.cores) || null,
@@ -344,18 +555,38 @@ export default function RequestFormPage({ onBack, className }) {
       value: template.volid,
       label: formatOstemplate(template.volid),
     })),
-    vm_os_options: vmTemplates.map((template) => ({
+    vm_os_options: vmChoices.map((template) => ({
       template_id: Number(template.vmid),
       label: template.name || String(template.vmid),
       node: template.node || "",
     })),
+    /* 應用範本的候選由後端提供，前端不送，避免候選清單可被偽造 */
     resource_options_from_client: true,
-  }), [resourceType, mode, form, gpuOptions, availabilityData, lxcTemplates, vmTemplates]);
+  }), [resourceType, mode, form, gpuOptions, availabilityData, lxcTemplates, vmChoices]);
 
   function applyAiPrefill(prefill) {
     if (!prefill) return;
     const nextResourceType = prefill.resource_type === "vm" ? "vm" : "lxc";
     setResourceType(nextResourceType);
+    setPendingGpu(
+      nextResourceType === "vm" && prefill.gpu_mapping_id
+        ? String(prefill.gpu_mapping_id)
+        : null,
+    );
+    /* AI 選了容器應用範本時給的是 PVE VMID，要換回目錄項目的 id */
+    const lxcCatalogPick = nextResourceType === "lxc" && prefill.lxc_template_id
+      ? catalogChoices.find((item) => (
+        item.resource_type === "lxc"
+          && String(item.pve_vmid) === String(prefill.lxc_template_id)
+      ))
+      : null;
+    if (nextResourceType === "vm") {
+      setAutoOsChoice(prefill.vm_template_id ? `vm:${prefill.vm_template_id}` : "");
+    } else if (lxcCatalogPick) {
+      setAutoOsChoice(`tpl:${lxcCatalogPick.id}`);
+    } else {
+      setAutoOsChoice(prefill.lxc_os_image ? `img:${prefill.lxc_os_image}` : "");
+    }
     if (isPrivileged && (prefill.mode === "scheduled" || prefill.mode === "immediate")) {
       setMode(prefill.mode);
     } else if (!isPrivileged) {
@@ -363,17 +594,15 @@ export default function RequestFormPage({ onBack, className }) {
     }
 
     if (nextResourceType !== "lxc") setSelectedTplId("");
+    else setSelectedTplId(lxcCatalogPick ? lxcCatalogPick.id : "");
 
     setForm((prev) => {
       const disk = Number(prefill.disk_gb || 0);
       return {
         ...prev,
         hostname: prefill.hostname ? normalizeHostname(prefill.hostname) : prev.hostname,
-        service_template_slug: nextResourceType === "lxc"
-          ? (prefill.service_template_slug || "")
-          : "",
         ostemplate: nextResourceType === "lxc"
-          ? (prefill.lxc_os_image || prev.ostemplate)
+          ? (lxcCatalogPick ? "" : (prefill.lxc_os_image || prev.ostemplate))
           : prev.ostemplate,
         template_id: nextResourceType === "vm" && prefill.vm_template_id
           ? String(prefill.vm_template_id)
@@ -386,9 +615,9 @@ export default function RequestFormPage({ onBack, className }) {
         disk_size: nextResourceType === "vm" && disk
           ? Math.max(20, disk)
           : prev.disk_size,
-        gpu_mapping_id: nextResourceType === "vm" && prefill.gpu_mapping_id
-          ? prefill.gpu_mapping_id
-          : "",
+        /* GPU 由 pendingGpu 那支 effect 在可用清單就緒後才寫入；這裡先留空，
+           免得寫進去又被清單檢查清掉，使用者以為填好了其實沒有。 */
+        gpu_mapping_id: "",
         start_at: prefill.start_at
           ? fromDateInputValue(toDateInputValue(prefill.start_at))
           : prev.start_at,
@@ -408,6 +637,62 @@ export default function RequestFormPage({ onBack, className }) {
         : "已匯入 AI 推薦配置；LXC Root 密碼不會由 AI 填入，請自行輸入。",
     );
   }
+
+  /* GPU 不能跟其他欄位一起寫進去：可用清單要等「作業系統確定是 GPU 版」加上
+     「時段選好」之後才非同步載入，先寫會被清單載入後的檢查清掉。所以先記著，
+     等清單就緒再套；真的套不上就講出來，不要安靜地把它丟掉。 */
+  useEffect(() => {
+    if (!pendingGpu) return;
+    if (resourceType !== "vm") { setPendingGpu(null); return; }
+    if (!selectedOsNeedsGpu) {
+      setPendingGpu(null);
+      toast.error("AI 建議搭配 GPU，但所選作業系統不是 GPU 版本，請改選標示「需 GPU」的作業系統。");
+      return;
+    }
+    if (mode === "scheduled" && !gpuWindowReady) return;   // 等使用者把時段選完
+    if (gpuLoading) return;
+    if (gpuOptionsKey !== gpuOptionsRequestKey) return;    // 等這個時段的清單回來
+
+    const match = gpuOptions.find((gpu) => gpu.mapping_id === pendingGpu);
+    if (match && match.available_count > 0) {
+      setForm((prev) => ({ ...prev, gpu_mapping_id: pendingGpu }));
+    } else {
+      toast.error("AI 建議的 GPU 在這個時段沒有可用的，請改選其他 GPU 或調整時段。");
+    }
+    setPendingGpu(null);
+  }, [
+    pendingGpu, resourceType, selectedOsNeedsGpu, mode, gpuWindowReady,
+    gpuLoading, gpuOptions, gpuOptionsKey, gpuOptionsRequestKey, toast,
+  ]);
+
+  /* AI 助手在別的頁面談完需求後，會帶著推薦配置導到這裡。等候選清單載入完再套用，
+     否則 LXC 應用範本會對不到目錄項目而退回成映像檔。 */
+  const [aiPrefilled, setAiPrefilled] = useState(false);
+  const appliedPrefillRef = useRef(null);
+  useEffect(() => {
+    if (!initialPrefill || sysTplLoading) return;
+    // 比對物件本身而不是布林旗標：助手再規劃一次帶新的配置過來時要能重新套用
+    if (appliedPrefillRef.current === initialPrefill) return;
+    appliedPrefillRef.current = initialPrefill;
+    applyAiPrefill(initialPrefill);
+    setAiPrefilled(true);
+  }, [initialPrefill, sysTplLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* 把自己交給 AI 助手：它就地把欄位填好，並且拿得到這張表單當下的真實候選
+     （這個時段的 GPU、可用時段、作業系統清單）。用 ref 轉一手，
+     註冊一次就好，不必每次 render 重註冊，也不會抓到過期的閉包。 */
+  const applyPrefillRef = useRef(applyAiPrefill);
+  const contextRef = useRef(recommendationContext);
+  applyPrefillRef.current = applyAiPrefill;
+  contextRef.current = recommendationContext;
+  useEffect(() => {
+    if (!registerRequestForm) return undefined;
+    registerRequestForm({
+      applyPrefill: (prefill) => applyPrefillRef.current(prefill),
+      getContext: () => contextRef.current,
+    });
+    return () => registerRequestForm(null);
+  }, [registerRequestForm]);
 
   function handleBack() {
     setClosing(true);
@@ -429,10 +714,11 @@ export default function RequestFormPage({ onBack, className }) {
     else if (form.reason.trim().length < 10) errs.reason = MSG.reasonMinLen;
 
     if (resourceType === "lxc" && !selectedTplId && !form.ostemplate)
-      errs.ostemplate = MSG.templateRequired;
+      errs.ostemplate = MSG.osRequired;
     if (resourceType === "vm") {
       if (!form.template_id)            errs.template_id = MSG.osRequired;
-      if (!form.username.trim())        errs.username    = MSG.usernameRequired;
+      if (!isWindowsVm && !form.username.trim()) errs.username = MSG.usernameRequired;
+      if (selectedOsNeedsGpu && !form.gpu_mapping_id) errs.gpu_mapping_id = MSG.gpuRequired;
     }
 
     if (mode === "scheduled") {
@@ -455,8 +741,9 @@ export default function RequestFormPage({ onBack, className }) {
   /* ── Submit ── */
   async function handleSubmit(e) {
     e.preventDefault();
+    const formEl = e.currentTarget;
     const errs = validate();
-    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+    if (Object.keys(errs).length > 0) { setErrors(errs); focusFirstError(formEl, errs); return; }
 
     setSubmitting(true);
     try {
@@ -483,8 +770,14 @@ export default function RequestFormPage({ onBack, className }) {
           cores: form.cores,
           memory: form.memory,
           ...(resourceType === "lxc"
-            ? { rootfs_size: form.rootfs_size }
-            : { disk_size: form.disk_size }),
+            ? {
+                rootfs_size: form.rootfs_size,
+                ostemplate: !selectedTplId && form.ostemplate ? form.ostemplate : undefined,
+              }
+            : {
+                disk_size: form.disk_size,
+                template_id: form.template_id ? Number(form.template_id) : undefined,
+              }),
           gpu_required: selectedGpuId ? 1 : 0,
           gpu_mapping_id: selectedGpuId || undefined,
           start_at: form.start_at,
@@ -505,6 +798,7 @@ export default function RequestFormPage({ onBack, className }) {
 
       const body = {
         resource_type: resourceType,
+        requested_mode: advisorDisabled ? "manual" : "auto",
         mode,
         hostname:  form.hostname,
         password:  form.password,
@@ -519,7 +813,7 @@ export default function RequestFormPage({ onBack, className }) {
                 ? {
                     /* 範本系統克隆路徑：帶 PVE VMID，免映像檔 */
                     template_id: selectedTpl.pve_vmid,
-                    os_info: selectedTpl.name,
+                    os_info: stripGpuMarker(selectedTpl.name),
                   }
                 : {
                     ostemplate: form.ostemplate,
@@ -528,15 +822,16 @@ export default function RequestFormPage({ onBack, className }) {
             }
           : {
               template_id: Number(form.template_id),
-              username: form.username,
+              ...(isWindowsVm ? {} : { username: form.username }),
               disk_size: form.disk_size,
               os_info:
-                vmTemplates.find((t) => String(t.vmid) === String(form.template_id))?.name ||
-                null,
+                stripGpuMarker(
+                  vmChoices.find((t) => String(t.vmid) === String(form.template_id))?.name ?? "",
+                ) || null,
             }),
         ...(selectedGpuId ? { gpu_mapping_id: selectedGpuId } : {}),
-        ...(resourceType === "lxc" && form.service_template_slug
-          ? { service_template_slug: form.service_template_slug }
+        ...(selectedGpuId && form.gpu_mdev_profile
+          ? { gpu_mdev_profile: form.gpu_mdev_profile }
           : {}),
         ...(mode === "scheduled"
           ? { start_at: form.start_at, end_at: form.end_at }
@@ -553,6 +848,18 @@ export default function RequestFormPage({ onBack, className }) {
     }
   }
 
+  /* ── VM 範本選擇：以範本自身規格帶入預設值（磁碟為克隆下限，不可低於範本） ── */
+  function handleSelectVmTemplate(v) {
+    set("template_id", v);
+    if (errors.template_id) setErrors((prev) => ({ ...prev, template_id: "" }));
+    const tpl = vmChoices.find((t) => String(t.vmid) === String(v));
+    if (!tpl) return;
+    if (tpl.cores)     set("cores", Math.min(8, Math.max(1, tpl.cores)));
+    if (tpl.memory_mb) set("memory", Math.min(32768, Math.max(512, tpl.memory_mb)));
+    // 不以 500 截斷：範本大於上限時，克隆機天生就是範本大小
+    if (tpl.disk_gb)   set("disk_size", tpl.disk_gb);
+  }
+
   /* ── 範本選擇（範本系統 2.0）── */
   function handleSelectSysTemplate(id) {
     setSelectedTplId(id);
@@ -561,8 +868,35 @@ export default function RequestFormPage({ onBack, className }) {
     if (!tpl) return;
     if (tpl.default_cores)  set("cores", Math.min(8, Math.max(1, tpl.default_cores)));
     if (tpl.default_memory) set("memory", Math.min(32768, Math.max(512, tpl.default_memory)));
-    if (tpl.default_disk)   set("rootfs_size", Math.min(500, Math.max(8, tpl.default_disk)));
+    if (tpl.default_disk)   set("rootfs_size", Math.max(8, tpl.default_disk));
     if (!form.hostname.trim()) set("hostname", normalizeHostname(tpl.name));
+  }
+
+  /* ── 自動模式：統一作業系統選擇 → 直接決定型別與對應欄位 ── */
+  function handleAutoOsSelect(value) {
+    setAutoOsChoice(value);
+    if (errors.template_id || errors.ostemplate) {
+      setErrors((prev) => ({ ...prev, template_id: "", ostemplate: "" }));
+    }
+    if (!value) return;
+    const [kind, ...rest] = value.split(":");
+    const id = rest.join(":"); // volid 本身含冒號（storage:vztmpl/...）
+    if (kind === "vm") {
+      setResourceType("vm");
+      setSelectedTplId("");
+      set("ostemplate", "");
+      handleSelectVmTemplate(id);
+    } else if (kind === "tpl") {
+      setResourceType("lxc");
+      set("template_id", "");
+      set("ostemplate", "");
+      handleSelectSysTemplate(id);
+    } else if (kind === "img") {
+      setResourceType("lxc");
+      setSelectedTplId("");
+      set("template_id", "");
+      set("ostemplate", id);
+    }
   }
 
   const animCls = closing ? styles.animSlideOutRight : (className ?? "");
@@ -570,16 +904,20 @@ export default function RequestFormPage({ onBack, className }) {
   return (
     <div className={`${styles.formPage} ${animCls}`}>
       {/* ── 頁首 ── */}
-      <div className={styles.formPageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>申請虛擬機 / 容器</h1>
-          <p className={styles.pageSubtitle}>填寫申請表單後送出，待管理員審核通過後會自動建立資源</p>
-        </div>
+      <PageHeader title="申請虛擬機 / 容器" subtitle="填寫申請表單後送出，待管理員審核通過後會自動建立資源">
         <button type="button" className={styles.backBtn} onClick={handleBack}>
           <MIcon name="arrow_back" size={18} />
           返回
         </button>
-      </div>
+      </PageHeader>
+
+      {/* AI 代填一定要說出來：使用者要知道哪些值不是自己填的 */}
+      {aiPrefilled && (
+        <p className={styles.adviceBox}>
+          <MIcon name="auto_awesome" size={15} />
+          {" "}以下欄位由 AI 依你的描述預填，送出前請逐項確認；帳號與密碼一律由你自己輸入。
+        </p>
+      )}
 
       {/* ── 主體：表單 + AI 側欄 ── */}
       <div className={styles.formPageBody}>
@@ -609,162 +947,124 @@ export default function RequestFormPage({ onBack, className }) {
               </div>
             )}
 
-            {/* ── 資源類型 ── */}
+            {/* ── 資源設定（型別由作業系統選擇 + 規則引擎自動決定，學生免選 QEMU/LXC） ── */}
             <div className={styles.formSection}>
-              <h2 className={styles.sectionTitle}>類型</h2>
-              <div className={styles.typeToggle}>
-                {[
-                  { key: "lxc", label: "LXC 容器",      icon: "dashboard" },
-                  { key: "vm",  label: "QEMU 虛擬機", icon: "computer"  },
-                ].map((t) => (
-                  <button
-                    key={t.key}
-                    type="button"
-                    className={`${styles.typeBtn} ${resourceType === t.key ? styles.typeBtnActive : ""}`}
-                    onClick={() => setResourceType(t.key)}
-                  >
-                    <MIcon name={t.icon} size={16} />
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+              <h2 className={styles.sectionTitle}>資源設定</h2>
 
-            {/* ── LXC 設定 ── */}
-            {resourceType === "lxc" && (
-              <div className={styles.formSection}>
-                <h2 className={styles.sectionTitle}>容器設定</h2>
+              <p className={styles.adviceBox}>
+                需要 GPU、圖形介面（GUI）或 Windows 時，請選擇「虛擬機範本」的作業系統；
+                一般輕量服務（網站、資料庫、開發環境）選容器範本或映像檔即可。
+              </p>
+              {!advisorDisabled && (adviceLoading || advice) && (
+                <p className={styles.adviceBox}>
+                  {adviceLoading
+                    ? "正在依申請內容判斷合適的類型…"
+                    : (() => {
+                        const label = (t) => (t === "vm" ? "虛擬機" : "LXC 容器");
+                        const text = `系統建議使用「${label(advice.resource_type)}」：${advice.reasons.join("；")}`;
+                        return osChosen && advice.resource_type !== resourceType
+                          ? `${text}（您選擇的作業系統屬於「${label(resourceType)}」，將依作業系統建立）`
+                          : text;
+                      })()}
+                </p>
+              )}
 
-                <FieldGroup label="容器名稱" required error={errors.hostname}>
-                  <input
-                    className={styles.input}
-                    placeholder="project-alpha-web"
-                    value={form.hostname}
-                    onChange={(e) => set("hostname", e.target.value)}
-                    onBlur={(e) => set("hostname", normalizeHostname(e.target.value))}
-                  />
-                </FieldGroup>
+              <FieldGroup label="資源名稱" required error={errors.hostname} name="hostname">
+                <input
+                  className={styles.input}
+                  placeholder="project-alpha-web"
+                  value={form.hostname}
+                  onChange={(e) => set("hostname", e.target.value)}
+                  onBlur={(e) => set("hostname", normalizeHostname(e.target.value))}
+                />
+              </FieldGroup>
 
-                <FieldGroup label="範本（選填）"
-                  hint={selectedTpl
-                    ? "將從範本克隆建立，免選映像檔；登入帳密沿用範本內建設定"
-                    : "從範本系統選擇可用範本，或留空改用作業系統映像檔建立"}>
-                  {selectedTpl ? (
-                    <div className={styles.templateSelected}>
-                      <MIcon name="layers" size={16} />
-                      <div className={styles.templateSelectedMeta}>
-                        <span className={styles.templateSelectedName}>{selectedTpl.name}</span>
-                        <span className={styles.templateSelectedSlug}>
-                          v{selectedTpl.version}
-                          {selectedTpl.description ? ` · ${selectedTpl.description}` : ""}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        className={styles.templateClearBtn}
-                        onClick={() => setSelectedTplId("")}
-                        title="清除"
-                      >
-                        <MIcon name="close" size={16} />
-                      </button>
-                    </div>
-                  ) : (
-                    <SelectField
-                      value={selectedTplId}
-                      onChange={handleSelectSysTemplate}
-                      disabled={sysTplLoading}
-                    >
-                      <option value="">
-                        {sysTplLoading ? "載入中…" : "不使用範本（從映像檔建立）"}
-                      </option>
-                      {lxcSysTemplates.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}（v{t.version}）
+              <FieldGroup label="作業系統" required name="ostemplate template_id"
+                error={errors.template_id || errors.ostemplate}
+                hint={osChosen
+                  ? `一次申請一台，將建立為「${resourceType === "vm" ? "虛擬機" : "LXC 容器"}」`
+                  : "可直接套用老師／官方準備好的環境範本，或從作業系統映像自行安裝；一次申請一台"}>
+                <SelectField
+                  value={autoOsChoice}
+                  onChange={handleAutoOsSelect}
+                  disabled={vmLoading || lxcLoading || sysTplLoading}
+                  placeholder={(vmLoading || lxcLoading || sysTplLoading) ? "載入中…" : "選擇作業系統"}
+                >
+                  {catalogChoices.length > 0 && (
+                    <optgroup label="老師／官方提供的環境範本">
+                      {catalogChoices.map((t) => (
+                        <option key={`cat-${t.id}`} value={t.choice}>
+                          {withGpuTag(stripGpuMarker(t.name), osNameNeedsGpu(t.name))}
                         </option>
                       ))}
-                      {!sysTplLoading && lxcSysTemplates.length === 0 && (
-                        <option value="__empty__" disabled>目前沒有可用的 LXC 範本</option>
-                      )}
-                    </SelectField>
+                    </optgroup>
                   )}
-                </FieldGroup>
-
-                {!selectedTpl && (
-                  <FieldGroup label="作業系統映像檔" required error={errors.ostemplate}
-                    hint="請從已上傳到節點的映像檔中選擇">
-                    <SelectField
-                      value={form.ostemplate}
-                      onChange={(v) => set("ostemplate", v)}
-                      disabled={lxcLoading}
-                      placeholder={lxcLoading ? "載入中…" : "選擇映像檔"}
-                    >
-                      {lxcTemplates.map((t) => (
-                        <option key={t.volid} value={t.volid}>{formatOstemplate(t.volid)}</option>
+                  {vmTemplates.length > 0 && (
+                    <optgroup label={isPrivileged ? "虛擬機範本" : "作業系統映像（虛擬機）"}>
+                      {vmTemplates.map((t) => (
+                        <option key={`vm-${t.vmid}`} value={`vm:${t.vmid}`}>
+                          {withGpuTag(stripGpuMarker(t.name), osNameNeedsGpu(t.name))}
+                        </option>
                       ))}
-                      {!lxcLoading && lxcTemplates.length === 0 && (
-                        <option value="" disabled>目前沒有可用映像檔</option>
-                      )}
-                    </SelectField>
-                  </FieldGroup>
+                    </optgroup>
+                  )}
+                  {isPrivileged && lxcSysTemplates.length > 0 && (
+                    <optgroup label="容器範本（克隆建立）">
+                      {lxcSysTemplates.map((t) => (
+                        <option key={`tpl-${t.id}`} value={`tpl:${t.id}`}>
+                          {withGpuTag(`${stripGpuMarker(t.name)}（v${t.version}）`, osNameNeedsGpu(t.name))}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {lxcTemplates.length > 0 && (
+                    <optgroup label="容器映像檔">
+                      {lxcTemplates.map((t) => {
+                        const img = parseLxcImage(t.volid);
+                        return (
+                          <option key={`img-${t.volid}`} value={`img:${t.volid}`}>
+                            {withGpuTag(img.label, img.needsGpu)}
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  )}
+                </SelectField>
+                {selectedCatalogItem && (
+                  <p className={styles.fieldHint}>
+                    {selectedCatalogItem.description
+                      || "老師／官方已裝好的環境，建立後可直接使用。"}
+                    {" "}範本建議規格：{selectedCatalogItem.cores ?? "—"} 核心 ·{" "}
+                    {selectedCatalogItem.memory_mb
+                      ? `${(selectedCatalogItem.memory_mb / 1024).toFixed(1)} GB RAM`
+                      : "— RAM"}
+                    {selectedCatalogItem.disk_gb ? ` · ${selectedCatalogItem.disk_gb} GB` : ""}
+                  </p>
                 )}
+              </FieldGroup>
 
-                <FieldGroup label="Root 密碼" required error={errors.password}
-                  hint={selectedTpl
-                    ? "克隆建立的容器沿用範本內建帳密，此密碼僅作平台紀錄"
-                    : undefined}>
-                  <input
-                    className={styles.input}
-                    type="password"
-                    placeholder="至少 8 個字元"
-                    value={form.password}
-                    onChange={(e) => set("password", e.target.value)}
-                  />
-                </FieldGroup>
-              </div>
-            )}
-
-            {/* ── VM 設定 ── */}
-            {resourceType === "vm" && (
-              <div className={styles.formSection}>
-                <h2 className={styles.sectionTitle}>虛擬機設定</h2>
-
-                <FieldGroup label="虛擬機名稱" required error={errors.hostname}>
-                  <input
-                    className={styles.input}
-                    placeholder="web-server-01"
-                    value={form.hostname}
-                    onChange={(e) => set("hostname", e.target.value)}
-                    onBlur={(e) => set("hostname", normalizeHostname(e.target.value))}
-                  />
-                </FieldGroup>
-
-                <FieldGroup label="作業系統" required error={errors.template_id}>
-                  <SelectField
-                    value={form.template_id}
-                    onChange={(v) => set("template_id", v)}
-                    disabled={vmLoading}
-                    placeholder={vmLoading ? "載入中…" : "選擇作業系統"}
-                  >
-                    {vmTemplates.map((t) => (
-                      <option key={t.vmid} value={t.vmid}>{t.name}</option>
-                    ))}
-                    {!vmLoading && vmTemplates.length === 0 && (
-                      <option value="" disabled>目前沒有可用範本</option>
-                    )}
-                  </SelectField>
-                </FieldGroup>
-
+              {/* 帳密欄位：選定作業系統（型別確定）後才顯示 */}
+              {osChosen && resourceType === "vm" && (
                 <div className={styles.formGrid}>
-                  <FieldGroup label="使用者名稱" required error={errors.username}>
-                    <input
-                      className={styles.input}
-                      placeholder="admin"
-                      value={form.username}
-                      onChange={(e) => set("username", e.target.value)}
-                    />
-                  </FieldGroup>
-
-                  <FieldGroup label="密碼" required error={errors.password}>
+                  {!isWindowsVm && (
+                    <FieldGroup label="使用者名稱" required error={errors.username} name="username">
+                      <input
+                        className={styles.input}
+                        placeholder="admin"
+                        value={form.username}
+                        onChange={(e) => set("username", e.target.value)}
+                      />
+                    </FieldGroup>
+                  )}
+                  <FieldGroup
+                    label="密碼"
+                    required
+                    error={errors.password}
+                    name="password"
+                    hint={isWindowsVm
+                      ? "Windows 範本登入帳號固定為 Admin，僅需設定密碼"
+                      : undefined}
+                  >
                     <input
                       className={styles.input}
                       type="password"
@@ -774,12 +1074,32 @@ export default function RequestFormPage({ onBack, className }) {
                     />
                   </FieldGroup>
                 </div>
-              </div>
-            )}
+              )}
+              {osChosen && resourceType === "lxc" && (
+                <FieldGroup label="密碼" required error={errors.password} name="password"
+                  hint={selectedTpl
+                    ? "克隆建立的容器沿用範本內建帳密，此密碼僅作平台紀錄"
+                    : "LXC 容器登入帳號固定為 root，僅需設定密碼"}>
+                  <input
+                    className={styles.input}
+                    type="password"
+                    placeholder="至少 8 個字元"
+                    value={form.password}
+                    onChange={(e) => set("password", e.target.value)}
+                  />
+                </FieldGroup>
+              )}
+            </div>
 
             {/* ── 硬體資源配置 ── */}
             <div className={styles.formSection}>
               <h2 className={styles.sectionTitle}>硬體資源配置</h2>
+
+              {selectedCatalogItem && (
+                <p className={styles.fieldHint}>
+                  已帶入範本的建議規格，可依需求調整；硬碟不可小於範本本身的大小。
+                </p>
+              )}
 
               <FieldGroup label="CPU 核心數" labelRight={`${form.cores} 核心`}>
                 <input
@@ -812,21 +1132,26 @@ export default function RequestFormPage({ onBack, className }) {
               {(() => {
                 const isLxc   = resourceType === "lxc";
                 const diskKey = isLxc ? "rootfs_size" : "disk_size";
-                const diskMin = isLxc ? 8 : 20;
+                // 選了範本時磁碟下限為範本自身大小（克隆後只能放大，不能縮小）；
+                // 範本若大於 500 上限，上限跟著放寬——克隆機天生就是範本大小
+                const diskMin = isLxc
+                  ? (selectedTpl?.default_disk || 8)
+                  : (selectedVmTemplate?.disk_gb || 20);
+                const diskMax = Math.max(500, diskMin);
                 return (
                   <FieldGroup label="硬碟空間 (Disk)" labelRight={
                     <div className={styles.diskInput}>
                       <input
-                        type="number" min={diskMin} max={500}
+                        type="number" min={diskMin} max={diskMax}
                         className={`${styles.input} ${styles.inputNumber}`}
                         value={form[diskKey]}
-                        onChange={(e) => set(diskKey, Math.min(500, Math.max(diskMin, Number(e.target.value) || diskMin)))}
+                        onChange={(e) => set(diskKey, Math.min(diskMax, Math.max(diskMin, Number(e.target.value) || diskMin)))}
                       />
                       <span className={styles.diskUnit}>GB</span>
                     </div>
                   }>
                     <input
-                      type="range" min={diskMin} max={500} step={1}
+                      type="range" min={diskMin} max={diskMax} step={1}
                       className={styles.slider}
                       value={form[diskKey]}
                       onChange={(e) => set(diskKey, Number(e.target.value))}
@@ -836,29 +1161,39 @@ export default function RequestFormPage({ onBack, className }) {
               })()}
             </div>
 
-            {/* ── GPU（VM only）── */}
-            {resourceType === "vm" && (
+            {/* ── GPU（僅所選作業系統標記 -GPU 時顯示）── */}
+            {resourceType === "vm" && selectedOsNeedsGpu && (
               <div className={styles.formSection}>
-                <h2 className={styles.sectionTitle}>GPU 加速（選填）</h2>
+                <h2 className={styles.sectionTitle}>GPU 加速</h2>
 
                 {!canLoadGpu && mode === "scheduled" && (
                   <p className={styles.fieldHint}>請先選擇租借時段，再載入該時段可用的 GPU。</p>
                 )}
                 {!gpuLoading && gpuOptions.length === 0 && (
-                  <p className={styles.fieldHint}>此時段目前沒有可用 GPU，可改選其他時段或不使用 GPU。</p>
+                  <p className={styles.fieldHint}>此時段目前沒有可用 GPU，請改選其他時段或其他作業系統。</p>
                 )}
 
                 <FieldGroup
                   label="選擇 GPU"
+                  required
+                  error={errors.gpu_mapping_id}
+                  name="gpu_mapping_id"
                   hint="GPU 會依所選時段重新計算可用性，送出前仍會再做一次即時檢查"
                 >
                   <SelectField
                     value={form.gpu_mapping_id || "__none__"}
-                    onChange={(v) => set("gpu_mapping_id", v === "__none__" ? "" : v)}
+                    onChange={(v) => {
+                      setForm((prev) => ({
+                        ...prev,
+                        gpu_mapping_id: v === "__none__" ? "" : v,
+                        gpu_mdev_profile: "",
+                      }));
+                      if (errors.gpu_mapping_id) setErrors((prev) => ({ ...prev, gpu_mapping_id: "" }));
+                    }}
                     disabled={gpuLoading || gpuOptions.length === 0}
                     placeholder={!canLoadGpu ? "請先選擇時段" : undefined}
                   >
-                    <option value="__none__">不需要 GPU</option>
+                    <option value="__none__">請選擇 GPU</option>
                     {gpuOptions.map((gpu) => (
                       <option key={gpu.mapping_id} value={gpu.mapping_id} disabled={gpu.available_count <= 0}>
                         {gpuLabel(gpu)}
@@ -866,6 +1201,26 @@ export default function RequestFormPage({ onBack, className }) {
                     ))}
                   </SelectField>
                 </FieldGroup>
+
+                {selectedGpuProfiles.length > 0 && (
+                  <FieldGroup
+                    label="vGPU 規格"
+                    hint="依需要的 GPU 記憶體選擇；預設為最小可用規格"
+                  >
+                    <SelectField
+                      value={form.gpu_mdev_profile || smallestCreatableProfile?.mdev_type || ""}
+                      onChange={(v) => set("gpu_mdev_profile", v)}
+                      placeholder={smallestCreatableProfile ? undefined : "無可建立的規格（記憶體不足）"}
+                    >
+                      {selectedGpuProfiles.map((p) => (
+                        <option key={p.mdev_type} value={p.mdev_type} disabled={!p.creatable}>
+                          {`${p.name || p.mdev_type} — ${formatVramMb(p.vram_mb)}`}
+                          {p.creatable ? "" : "（記憶體不足）"}
+                        </option>
+                      ))}
+                    </SelectField>
+                  </FieldGroup>
+                )}
               </div>
             )}
 
@@ -892,7 +1247,7 @@ export default function RequestFormPage({ onBack, className }) {
                     無限期 (No end date)
                   </label>
                   {!form.immediate_no_end && (
-                    <FieldGroup label="結束時間" error={errors.end_at}>
+                    <FieldGroup label="結束時間" error={errors.end_at} name="end_at">
                       <input
                       type="datetime-local"
                       className={styles.input}
@@ -907,7 +1262,7 @@ export default function RequestFormPage({ onBack, className }) {
               ) : (
                 <>
                   <div className={styles.scheduleInputGrid}>
-                    <FieldGroup label="開始日期" required error={errors.start_at}>
+                    <FieldGroup label="開始日期" required error={errors.start_at} name="start_at">
                       <input
                         type="date"
                         className={styles.input}
@@ -917,7 +1272,7 @@ export default function RequestFormPage({ onBack, className }) {
                         onChange={(e) => set("start_at", fromDateInputValue(e.target.value))}
                       />
                     </FieldGroup>
-                    <FieldGroup label="結束日期" required error={errors.end_at}>
+                    <FieldGroup label="結束日期" required error={errors.end_at} name="end_at">
                       <input
                         type="date"
                         className={styles.input}
@@ -937,8 +1292,15 @@ export default function RequestFormPage({ onBack, className }) {
                       cores:         form.cores,
                       memory:        form.memory,
                       ...(resourceType === "lxc"
-                        ? { rootfs_size: form.rootfs_size }
-                        : { disk_size:   form.disk_size }),
+                        ? {
+                            rootfs_size: form.rootfs_size,
+                            /* 模板節點約束：行事曆只推薦拿得到模板的節點（克隆路徑節點由範本釘死，不帶） */
+                            ostemplate: !selectedTplId && form.ostemplate ? form.ostemplate : undefined,
+                          }
+                        : {
+                            disk_size: form.disk_size,
+                            template_id: form.template_id ? Number(form.template_id) : undefined,
+                          }),
                       gpu_required: resourceType === "vm" && form.gpu_mapping_id ? 1 : 0,
                       gpu_mapping_id: resourceType === "vm" && form.gpu_mapping_id
                         ? form.gpu_mapping_id
@@ -957,7 +1319,7 @@ export default function RequestFormPage({ onBack, className }) {
             {/* ── 申請原因 ── */}
             <div className={styles.formSection}>
               <h2 className={styles.sectionTitle}>申請原因<span className={styles.required}> *</span></h2>
-              <FieldGroup error={errors.reason}>
+              <FieldGroup error={errors.reason} name="reason">
                 <textarea
                   className={styles.textarea}
                   placeholder="請描述您的申請用途..."
@@ -981,7 +1343,7 @@ export default function RequestFormPage({ onBack, className }) {
               disabled={submitting}
             >
               {submitting
-                ? <><MIcon name="hourglass_empty" size={16} />送出中…</>
+                ? <><span className={styles.spin}><MIcon name="hourglass_empty" size={16} /></span>送出中…</>
                 : <><MIcon name="send" size={16} />送出申請</>
               }
             </button>
@@ -989,40 +1351,14 @@ export default function RequestFormPage({ onBack, className }) {
           </div>
         </div>
 
-        {/* Mobile AI 側欄 */}
-        {aiOpen && (
-          <AiSidePanel
-            className={styles.aiPanelMobile}
-            recommendationContext={recommendationContext}
-            onImportPlan={applyAiPrefill}
-          />
-        )}
-
         {/* Desktop 右側面板（摘要 + AI）*/}
         <div className={styles.rightPanel}>
-          <div className={styles.rightPanelTabs}>
-            {[
-              { key: "summary", label: "摘要",   icon: "receipt_long" },
-              { key: "ai",      label: "AI 助手", icon: "smart_toy"    },
-            ].map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                className={`${styles.rightPanelTab} ${rightTab === t.key ? styles.rightPanelTabActive : ""}`}
-                onClick={() => setRightTab(t.key)}
-              >
-                <MIcon name={t.icon} size={14} />
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          <div className={`${styles.summaryBody} ${rightTab !== "summary" ? styles.rightPanelPaneHidden : ""}`}>
+          <div className={styles.summaryBody}>
               {/* Type / mode chips */}
               <div className={styles.summaryChips}>
                 <span className={`${styles.summaryChip} ${resourceType === "lxc" ? styles.summaryChipLxc : styles.summaryChipVm}`}>
                   <MIcon name={resourceType === "lxc" ? "dashboard" : "computer"} size={12} />
-                  {resourceType === "lxc" ? "LXC 容器" : "QEMU 虛擬機"}
+                  {resourceType === "lxc" ? "LXC 容器" : "虛擬機"}
                 </span>
                 {isPrivileged && (
                   <span className={`${styles.summaryChip} ${mode === "scheduled" ? styles.summaryChipScheduled : styles.summaryChipImmediate}`}>
@@ -1063,14 +1399,16 @@ export default function RequestFormPage({ onBack, className }) {
                     <span className={styles.summaryLabel}>作業系統</span>
                     <span className={`${styles.summaryValue} ${!form.template_id ? styles.summaryValueMuted : ""}`}>
                       {form.template_id
-                        ? (vmTemplates.find((t) => String(t.vmid) === String(form.template_id))?.name ?? form.template_id)
+                        ? (vmChoices.find((t) => String(t.vmid) === String(form.template_id))?.name ?? form.template_id)
                         : "未選擇"}
                     </span>
                   </div>
-                  {form.username && (
+                  {(isWindowsVm || form.username) && (
                     <div className={styles.summaryRow}>
                       <span className={styles.summaryLabel}>使用者</span>
-                      <span className={styles.summaryValue}>{form.username}</span>
+                      <span className={styles.summaryValue}>
+                        {isWindowsVm ? "Admin（Windows 固定）" : form.username}
+                      </span>
                     </div>
                   )}
                 </>
@@ -1130,25 +1468,9 @@ export default function RequestFormPage({ onBack, className }) {
                 </div>
               )}
           </div>
-
-          <AiSidePanel
-            className={`${styles.aiPanelFill} ${rightTab !== "ai" ? styles.rightPanelPaneHidden : ""}`}
-            recommendationContext={recommendationContext}
-            onImportPlan={applyAiPrefill}
-          />
         </div>
       </div>
 
-      {/* 浮動 AI Tab（僅手機）*/}
-      <button
-        type="button"
-        className={`${styles.aiFloatingTab} ${styles.aiFloatingTabMobileOnly} ${aiOpen ? styles.aiFloatingTabOpen : ""}`}
-        onClick={() => setAiOpen((v) => !v)}
-      >
-        <MIcon name="smart_toy" size={16} />
-        <span>{aiOpen ? "關閉 AI" : "AI 助手"}</span>
-        <MIcon name={aiOpen ? "keyboard_arrow_down" : "keyboard_arrow_up"} size={16} />
-      </button>
 
     </div>
   );

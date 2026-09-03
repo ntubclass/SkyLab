@@ -8,9 +8,9 @@ API schemas 已移至 app.schemas 模組。
 from sqlmodel import SQLModel
 
 from .ai_api_credential import AIAPICredential
-from .ai_api_rate_limit import AIAPIRateLimit
 from .ai_api_request import AIAPIRequest, AIAPIRequestStatus
 from .ai_api_usage import AIAPIUsage
+from .ai_pve_template import AIPVETemplate
 from .ai_template_call_log import AITemplateCallLog
 from .alert_event import AlertEvent, AlertMetric, AlertScope
 from .audit_log import AuditAction, AuditLog
@@ -33,12 +33,19 @@ from .course import (
     CourseTask,
     UserCourseProgress,
 )
+from .course_environment import (
+    ClassCapacityReservation,
+    CourseEnvironment,
+    CourseEnvironmentAudience,
+    CourseEnvironmentEdge,
+    CourseEnvironmentNode,
+    CourseEnvironmentVersion,
+    CourseEnvironmentVersionStatus,
+)
 from .deletion_request import DeletionRequest, DeletionRequestStatus
 from .firewall_layout import FirewallLayout
 from .gateway_config import GatewayConfig
 from .governance_config import GovernanceConfig
-from .group import Group
-from .group_member import GroupMember
 from .ip_allocation import IpAllocation
 from .ldap_config import LdapConfig
 from .mining_incident import MiningIncident, MiningIncidentStatus
@@ -49,13 +56,15 @@ from .proxmox_config import (
     ProxmoxPlacementConfig,
     ProxmoxSchedulerConfig,
 )
+from .proxmox_connection import ProxmoxConnection
 from .proxmox_node import ProxmoxNode
 from .proxmox_storage import ProxmoxStorage
+from .quick_practice import QuickPracticeSession, QuickPracticeSessionMachine
+from .quota_config import QuotaConfig
 from .resource import Resource
 from .resource_network import ResourceNetwork
-from .resource_quota import QuotaScope, ResourceQuota
+from .resource_quota import ResourceQuota
 from .reverse_proxy_rule import ReverseProxyRule
-from .script_deploy_log import ScriptDeployLog
 from .spec_change_request import (
     SpecChangeRequest,
     SpecChangeRequestStatus,
@@ -75,7 +84,23 @@ from .teacher_judge_script_run import (
     TeacherJudgeScriptRunStatus,
     TeacherJudgeScriptRunTargetScope,
 )
+from .teacher_judge_session import (
+    TeacherJudgeMessageRole,
+    TeacherJudgeMessageType,
+    TeacherJudgeSession,
+    TeacherJudgeSessionMessage,
+    TeacherJudgeSessionStatus,
+)
 from .teacher_judge_template_command import TeacherJudgeTemplateCommand
+from .teaching_class import (
+    TeachingClass,
+    TeachingClassMachineNode,
+    TeachingClassStatus,
+    TeachingClassStudent,
+    TeachingClassStudentMachine,
+    TeachingClassTaskFile,
+    TeachingClassWeek,
+)
 from .tunnel_proxy import TunnelProxy
 from .user import User, UserBase, UserRole
 from .vm_request import (
@@ -87,11 +112,12 @@ from .vm_request import (
     VMRequestStatus,
 )
 from .vm_template import (
+    TemplateAttachment,
     VMTemplate,
-    VMTemplateGroupLink,
     VMTemplateStatus,
     VMTemplateVisibility,
 )
+from .wireguard_peer import WireGuardPeer
 
 __all__ = [
     # Base
@@ -106,13 +132,13 @@ __all__ = [
     "AIAPIRequest",
     "AIAPIRequestStatus",
     "AIAPIUsage",
-    "AIAPIRateLimit",
+    "AIPVETemplate",
     "AITemplateCallLog",
     # Resource
     "Resource",
     "ResourceNetwork",
     "ResourceQuota",
-    "QuotaScope",
+    "QuotaConfig",
     # VM Request
     "VMProvisioningStatus",
     "VMRequest",
@@ -136,11 +162,9 @@ __all__ = [
     "SpecChangeRequest",
     "SpecChangeRequestStatus",
     "SpecChangeType",
-    # Groups
-    "Group",
-    "GroupMember",
     # Proxmox Config
     "ProxmoxConfig",
+    "ProxmoxConnection",
     "ProxmoxConnectionConfig",
     "ProxmoxPlacementConfig",
     "ProxmoxSchedulerConfig",
@@ -156,6 +180,15 @@ __all__ = [
     "GatewayConfig",
     # Cloudflare Config
     "CloudflareConfig",
+    "CourseEnvironment",
+    "CourseEnvironmentAudience",
+    "CourseEnvironmentEdge",
+    "CourseEnvironmentVersion",
+    "CourseEnvironmentVersionStatus",
+    "CourseEnvironmentNode",
+    "ClassCapacityReservation",
+    "QuickPracticeSession",
+    "QuickPracticeSessionMachine",
     # Reverse Proxy Rules
     "ReverseProxyRule",
     # Batch Provision
@@ -168,9 +201,13 @@ __all__ = [
     # Subnet & IP Management
     "SubnetConfig",
     "IpAllocation",
-    "ScriptDeployLog",
     "TeacherJudgeFile",
     "TeacherJudgeFileStatus",
+    "TeacherJudgeMessageRole",
+    "TeacherJudgeMessageType",
+    "TeacherJudgeSession",
+    "TeacherJudgeSessionMessage",
+    "TeacherJudgeSessionStatus",
     "TeacherJudgeScriptArtifact",
     "TeacherJudgeScriptLanguage",
     "TeacherJudgeScriptRun",
@@ -183,13 +220,21 @@ __all__ = [
     "DeletionRequest",
     "DeletionRequestStatus",
     # VM Template (範本系統 2.0)
+    "TemplateAttachment",
     "VMTemplate",
-    "VMTemplateGroupLink",
     "VMTemplateStatus",
     "VMTemplateVisibility",
     # Task Record (背景任務)
     "TaskRecord",
     "TaskRecordStatus",
+    "TeachingClass",
+    "TeachingClassStatus",
+    "TeachingClassMachineNode",
+    "TeachingClassWeek",
+    "TeachingClassTaskFile",
+    "TeachingClassStudent",
+    "TeachingClassStudentMachine",
+    "WireGuardPeer",
     # Course Lab (互動式實作教學)
     "CoursePath",
     "CoursePathStatus",

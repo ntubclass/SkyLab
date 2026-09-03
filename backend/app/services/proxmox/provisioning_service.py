@@ -5,12 +5,12 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from urllib.parse import quote
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.security import decrypt_value, encrypt_value
 from app.domain.placement import advisor as placement_advisor
 from app.exceptions import ProxmoxError
-from app.infrastructure.proxmox import get_proxmox_settings
+from app.infrastructure.proxmox import get_proxmox_settings_for_node
 from app.infrastructure.ssh.client import generate_ed25519_keypair
 from app.repositories import resource as resource_repo
 from app.repositories import vm_request as vm_request_repo
@@ -29,7 +29,7 @@ from app.services.network import (
 )
 from app.services.proxmox import gpu_service, proxmox_service
 from app.services.user import audit_service
-from app.services.vm import vm_request_placement_service
+from app.services.vm import placement_support, vm_request_placement_service
 from app.utils.hostname import to_punycode_hostname
 
 logger = logging.getLogger(__name__)
@@ -65,9 +65,7 @@ def _ensure_resource_stopped(
     try:
         status = proxmox_service.get_status(node, vmid, resource_type)
     except Exception:
-        logger.warning(
-            "Failed to fetch %s %s status before stop", resource_type, vmid
-        )
+        logger.warning("Failed to fetch %s %s status before stop", resource_type, vmid)
         return
 
     if status.get("status") != "running":
@@ -92,9 +90,7 @@ def _ensure_resource_stopped(
     logger.warning(
         "%s %s still appears running after stop timeout", resource_type, vmid
     )
-    raise ProxmoxError(
-        f"{resource_type} {vmid} is still running after stop timeout"
-    )
+    raise ProxmoxError(f"{resource_type} {vmid} is still running after stop timeout")
 
 
 def _cleanup_failed_resource(node: str, vmid: int, resource_type: str) -> None:
@@ -127,16 +123,69 @@ def cleanup_provisioned_resource(vmid: int) -> None:
     _cleanup_failed_resource(resource["node"], vmid, resource["type"])
 
 
+def _build_gpu_hostpci(mapping_id: str, mdev_profile: str | None) -> str:
+    """驗證 GPU 可用額度與 vGPU 規格，回傳 hostpci 設定字串。
+
+    profile 的 creatable 是即時的（NVIDIA 只回報還放得下的規格），
+    克隆前這裡是最後一道防線。
+
+    vGPU 卡（profiles 非空）未指定規格時，自動配「最小可建規格」——
+    不帶 mdev 的裸 VF 對 NVIDIA vGPU 是不可用的，不能落回 raw passthrough。
+    """
+    from app.services.proxmox import gpu_service  # noqa: PLC0415
+
+    try:
+        gpu_detail = gpu_service.get_gpu_mapping(mapping_id)
+        if gpu_detail.available_count <= 0:
+            raise ProxmoxError(
+                f"GPU {mapping_id} 已無可用額度 "
+                f"(used={gpu_detail.used_count}/{gpu_detail.capacity_count})"
+            )
+        if mdev_profile:
+            match = next(
+                (p for p in gpu_detail.profiles if p.mdev_type == mdev_profile),
+                None,
+            )
+            if gpu_detail.profiles and match is None:
+                raise ProxmoxError(
+                    f"GPU {mapping_id} 沒有 vGPU 規格 '{mdev_profile}'"
+                )
+            if match is not None and not match.creatable:
+                raise ProxmoxError(
+                    f"vGPU 規格 '{match.name or mdev_profile}' "
+                    "目前 GPU 記憶體不足，無法建立"
+                )
+        elif gpu_detail.profiles:
+            creatable = [
+                p for p in gpu_detail.profiles if p.creatable and p.vram_mb > 0
+            ]
+            if not creatable:
+                raise ProxmoxError(
+                    f"GPU {mapping_id} 記憶體已滿，目前無法建立任何 vGPU"
+                )
+            auto = min(creatable, key=lambda p: p.vram_mb)
+            logger.info(
+                "GPU %s 未指定 vGPU 規格，自動配最小可用規格 %s (%s)",
+                mapping_id, auto.name or auto.mdev_type, auto.mdev_type,
+            )
+            mdev_profile = auto.mdev_type
+    except ProxmoxError:
+        raise
+    except Exception as e:
+        logger.error("GPU 可用性檢查失敗 (%s): %s", mapping_id, e)
+        raise ProxmoxError(f"無法驗證 GPU '{mapping_id}'：{e}")
+
+    if mdev_profile:
+        return f"mapping={mapping_id},mdev={mdev_profile}"
+    return f"mapping={mapping_id}"
+
+
 def _gpu_mapping_nodes(mapping_id: str | None) -> set[str]:
     if not mapping_id:
         return set()
 
     mapping = gpu_service.get_gpu_mapping(str(mapping_id))
-    return {
-        str(item.node).strip()
-        for item in mapping.maps
-        if str(item.node).strip()
-    }
+    return {str(item.node).strip() for item in mapping.maps if str(item.node).strip()}
 
 
 def _select_request_placement(
@@ -147,6 +196,22 @@ def _select_request_placement(
     placement_strategy: str,
 ):
     compatible_nodes = _gpu_mapping_nodes(getattr(db_request, "gpu_mapping_id", None))
+    # 模板節點白名單（None = 不受限）：vztmpl 只在部分節點可見、
+    # VM 克隆不可跨連線，指定節點與自動選擇都必須落在白名單內。
+    template_nodes = placement_support.allowed_template_nodes_for_request(
+        placement_request
+    )
+
+    def _template_node_error(node: str) -> ProxmoxError:
+        template_label = (
+            getattr(db_request, "ostemplate", None)
+            or getattr(db_request, "template_id", None)
+            or "unknown"
+        )
+        return ProxmoxError(
+            f"Node '{node}' cannot access template '{template_label}'"
+            f"（模板僅存在於：{', '.join(sorted(template_nodes)) or '無任何節點'}）。"
+        )
 
     pinned_node = getattr(db_request, "desired_node", None) or getattr(
         db_request, "assigned_node", None
@@ -157,6 +222,8 @@ def _select_request_placement(
                 f"Pinned node '{pinned_node}' is not compatible with GPU mapping "
                 f"'{getattr(db_request, 'gpu_mapping_id', '')}'."
             )
+        if template_nodes is not None and str(pinned_node) not in template_nodes:
+            raise _template_node_error(str(pinned_node))
 
         nodes, resources = placement_advisor._load_cluster_state()
         cpu_overcommit_ratio, disk_overcommit_ratio = (
@@ -171,8 +238,8 @@ def _select_request_placement(
         node_capacities = [
             item for item in node_capacities if item.node == str(pinned_node)
         ]
-        effective_resource_type, resource_type_reason = placement_advisor._decide_resource_type(
-            placement_request
+        effective_resource_type, resource_type_reason = (
+            placement_advisor._decide_resource_type(placement_request)
         )
         placement = vm_request_placement_service.CurrentPlacementSelection(
             node=str(pinned_node),
@@ -184,12 +251,16 @@ def _select_request_placement(
                 effective_resource_type=effective_resource_type,
                 resource_type_reason=resource_type_reason,
                 placement_strategy=placement_strategy,
-                node_priorities=vm_request_placement_service.get_node_priorities(session),
+                node_priorities=vm_request_placement_service.get_node_priorities(
+                    session
+                ),
             ),
         )
         if not placement.plan.feasible or not placement.node:
             reserved_requests = []
-            if getattr(db_request, "start_at", None) and getattr(db_request, "end_at", None):
+            if getattr(db_request, "start_at", None) and getattr(
+                db_request, "end_at", None
+            ):
                 reserved_requests = [
                     item
                     for item in vm_request_repo.get_approved_vm_requests_overlapping_window(
@@ -210,6 +281,11 @@ def _select_request_placement(
                         f"No feasible GPU-compatible node for mapping "
                         f"'{getattr(db_request, 'gpu_mapping_id', '')}' in the selected time window."
                     )
+                if (
+                    template_nodes is not None
+                    and str(fallback.node) not in template_nodes
+                ):
+                    raise _template_node_error(str(fallback.node))
                 logger.warning(
                     "Reserved node %s is no longer feasible for request %s; falling back to %s",
                     pinned_node,
@@ -223,11 +299,21 @@ def _select_request_placement(
         session=session,
         db_request=db_request,
     )
-    if compatible_nodes and selection.node and str(selection.node) not in compatible_nodes:
+    if (
+        compatible_nodes
+        and selection.node
+        and str(selection.node) not in compatible_nodes
+    ):
         raise ProxmoxError(
             f"Selected node '{selection.node}' is not compatible with GPU mapping "
             f"'{getattr(db_request, 'gpu_mapping_id', '')}'."
         )
+    if (
+        template_nodes is not None
+        and selection.node
+        and str(selection.node) not in template_nodes
+    ):
+        raise _template_node_error(str(selection.node))
     return selection
 
 
@@ -282,6 +368,7 @@ def create_lxc(
     lxc_data: LXCCreateRequest,
     user_id: uuid.UUID,
     batch_job_id: uuid.UUID | None = None,
+    ip_reservation_key: str | None = None,
 ) -> LXCCreateResponse:
     vmid = proxmox_service.next_vmid()
     target_node = _get_lxc_target_node()
@@ -295,7 +382,9 @@ def create_lxc(
     )
     # 取得網路配置並分配 IP
     net_cfg = ip_management_service.get_network_config_for_vm(session)
-    allocated_ip = ip_management_service.allocate_ip(session, vmid, "lxc")
+    allocated_ip = ip_management_service.allocate_ip(
+        session, vmid, "lxc", reservation_key=ip_reservation_key
+    )
 
     created = False
     try:
@@ -319,7 +408,7 @@ def create_lxc(
             "net0": net0_parts,
             "unprivileged": int(lxc_data.unprivileged),
             "start": int(lxc_data.start),
-            "pool": get_proxmox_settings().pool_name,
+            "pool": get_proxmox_settings_for_node(target_node).pool_name,
             "features": "nesting=1",
             "ssh-public-keys": public_key,
         }
@@ -340,7 +429,6 @@ def create_lxc(
             expiry_date=lxc_data.expiry_date,
             ssh_private_key_encrypted=encrypt_value(private_key_pem),
             ssh_public_key=public_key,
-            service_template_slug=lxc_data.service_template_slug,
             batch_job_id=batch_job_id,
             commit=False,
         )
@@ -368,7 +456,9 @@ def create_lxc(
                 vm_type="lxc",
             )
         except Exception:
-            logger.warning("Failed to register tunnel proxies for LXC %s", vmid, exc_info=True)
+            logger.warning(
+                "Failed to register tunnel proxies for LXC %s", vmid, exc_info=True
+            )
 
         logger.info(f"Created LXC container {vmid}: {lxc_data.hostname}")
         return LXCCreateResponse(
@@ -381,7 +471,11 @@ def create_lxc(
         # 釋放已分配的 IP
         try:
             with Session(session.get_bind()) as cleanup_session:
-                ip_management_service.release_ip(cleanup_session, vmid)
+                ip_management_service.release_ip(
+                    cleanup_session,
+                    vmid,
+                    restore_reservation=bool(ip_reservation_key),
+                )
                 cleanup_session.commit()
         except Exception:
             logger.warning("Failed to release IP for LXC %d during cleanup", vmid)
@@ -392,16 +486,21 @@ def create_lxc(
                     pos = r.get("pos")
                     if pos is not None:
                         try:
-                            firewall_service.delete_rule_by_pos(target_node, vmid, "lxc", int(pos))
+                            firewall_service.delete_rule_by_pos(
+                                target_node, vmid, "lxc", int(pos)
+                            )
                         except Exception as fw_err:
                             logger.debug(
                                 "LXC %d firewall rule pos=%s cleanup failed: %s",
-                                vmid, pos, fw_err,
+                                vmid,
+                                pos,
+                                fw_err,
                             )
             except Exception as fw_err:
                 logger.debug(
                     "LXC %d firewall rule listing for cleanup failed: %s",
-                    vmid, fw_err,
+                    vmid,
+                    fw_err,
                 )
             _cleanup_failed_resource(target_node, vmid, "lxc")
         logger.error(f"Failed to create LXC container: {e}")
@@ -414,6 +513,7 @@ def create_vm(
     vm_data: VMCreateRequest,
     user_id: uuid.UUID,
     batch_job_id: uuid.UUID | None = None,
+    ip_reservation_key: str | None = None,
 ) -> VMCreateResponse:
     new_vmid = proxmox_service.next_vmid()
     target_node = _get_vm_target_node(vm_data.template_id)
@@ -428,7 +528,9 @@ def create_vm(
 
     # 取得網路配置並分配 IP
     net_cfg = ip_management_service.get_network_config_for_vm(session)
-    allocated_ip = ip_management_service.allocate_ip(session, new_vmid, "vm")
+    allocated_ip = ip_management_service.allocate_ip(
+        session, new_vmid, "vm", reservation_key=ip_reservation_key
+    )
 
     created = False
     try:
@@ -440,47 +542,39 @@ def create_vm(
             "name": to_punycode_hostname(vm_data.hostname),
             "full": 1,
             "storage": target_storage,
-            "pool": get_proxmox_settings().pool_name,
+            "pool": get_proxmox_settings_for_node(target_node).pool_name,
         }
 
-        result = proxmox_service.clone_vm(target_node, vm_data.template_id, **clone_config)
+        result = proxmox_service.clone_vm(
+            target_node, vm_data.template_id, **clone_config
+        )
         created = True
 
         config_updates = {
             "cores": vm_data.cores,
             "memory": vm_data.memory,
-            "ciuser": vm_data.username,
             "cipassword": vm_data.password,
             "sshkeys": quote(public_key, safe=""),
             "ciupgrade": 0,
             "net0": f"virtio,bridge={net_cfg['bridge_name']},firewall=1",
             "ipconfig0": f"ip={allocated_ip}/{net_cfg['prefix_len']},gw={net_cfg['gateway']}",
         }
+        # Windows 範本不帶 username（帳號由 cloudbase-init 設定檔固定）
+        if vm_data.username:
+            config_updates["ciuser"] = vm_data.username
         if net_cfg.get("dns_servers"):
             config_updates["nameserver"] = net_cfg["dns_servers"]
         gpu_mapping_id = getattr(vm_data, "gpu_mapping_id", None)
         if gpu_mapping_id:
-            from app.services.proxmox import gpu_service
-            try:
-                gpu_detail = gpu_service.get_gpu_mapping(gpu_mapping_id)
-                if gpu_detail.available_count <= 0:
-                    raise ProxmoxError(
-                        f"GPU {gpu_mapping_id} 已無可用插槽 "
-                        f"(used={gpu_detail.used_count}/{gpu_detail.device_count})"
-                    )
-            except ProxmoxError:
-                raise
-            except Exception as e:
-                logger.error("GPU 可用性檢查失敗 (%s): %s", gpu_mapping_id, e)
-                raise ProxmoxError(f"無法驗證 GPU '{gpu_mapping_id}'：{e}")
-            config_updates["hostpci0"] = f"mapping={gpu_mapping_id}"
+            config_updates["hostpci0"] = _build_gpu_hostpci(
+                gpu_mapping_id, getattr(vm_data, "gpu_mdev_profile", None)
+            )
         _ensure_resource_stopped(target_node, new_vmid, "qemu")
         proxmox_service.update_config(target_node, new_vmid, "qemu", **config_updates)
 
-        if vm_data.disk_size:
-            proxmox_service.resize_disk(
-                target_node, new_vmid, "qemu", "scsi0", f"{vm_data.disk_size}G"
-            )
+        _resize_clone_disk_if_needed(
+            target_node, new_vmid, vm_data.template_id, vm_data.disk_size
+        )
 
         firewall_service.setup_default_rules(target_node, new_vmid, "qemu")
 
@@ -497,7 +591,6 @@ def create_vm(
             template_id=vm_data.template_id,
             ssh_private_key_encrypted=encrypt_value(private_key_pem),
             ssh_public_key=public_key,
-            service_template_slug=vm_data.service_template_slug,
             batch_job_id=batch_job_id,
             commit=False,
         )
@@ -525,7 +618,9 @@ def create_vm(
                 vm_type="qemu",
             )
         except Exception:
-            logger.warning("Failed to register tunnel proxies for VM %d", new_vmid, exc_info=True)
+            logger.warning(
+                "Failed to register tunnel proxies for VM %d", new_vmid, exc_info=True
+            )
 
         logger.info(f"Created VM {new_vmid} from template {vm_data.template_id}")
         return VMCreateResponse(
@@ -538,27 +633,38 @@ def create_vm(
         # 釋放已分配的 IP
         try:
             with Session(session.get_bind()) as cleanup_session:
-                ip_management_service.release_ip(cleanup_session, new_vmid)
+                ip_management_service.release_ip(
+                    cleanup_session,
+                    new_vmid,
+                    restore_reservation=bool(ip_reservation_key),
+                )
                 cleanup_session.commit()
         except Exception:
             logger.warning("Failed to release IP for VM %d during cleanup", new_vmid)
         if created:
             try:
-                rules = firewall_service.get_vm_firewall_rules(target_node, new_vmid, "qemu")
+                rules = firewall_service.get_vm_firewall_rules(
+                    target_node, new_vmid, "qemu"
+                )
                 for r in sorted(rules, key=lambda x: x.get("pos", 0), reverse=True):
                     pos = r.get("pos")
                     if pos is not None:
                         try:
-                            firewall_service.delete_rule_by_pos(target_node, new_vmid, "qemu", int(pos))
+                            firewall_service.delete_rule_by_pos(
+                                target_node, new_vmid, "qemu", int(pos)
+                            )
                         except Exception as fw_err:
                             logger.debug(
                                 "VM %d firewall rule pos=%s cleanup failed: %s",
-                                new_vmid, pos, fw_err,
+                                new_vmid,
+                                pos,
+                                fw_err,
                             )
             except Exception as fw_err:
                 logger.debug(
                     "VM %d firewall rule listing for cleanup failed: %s",
-                    new_vmid, fw_err,
+                    new_vmid,
+                    fw_err,
                 )
             _cleanup_failed_resource(target_node, new_vmid, "qemu")
         logger.error(f"Failed to create VM: {e}")
@@ -596,7 +702,28 @@ def plan_provision(*, session: Session, db_request) -> dict:
     # 取得網路配置並分配 IP（需在 session 中完成）
     net_cfg = ip_management_service.get_network_config_for_vm(session)
     purpose = "lxc" if db_request.resource_type == "lxc" else "vm"
-    allocated_ip = ip_management_service.allocate_ip(session, new_vmid, purpose)
+    ip_reservation_key: str | None = None
+    if getattr(db_request, "request_kind", "") == "quick_template":
+        # Multi-machine quick-practice reserves every IP in one launch
+        # transaction. Resolve the stable key from the request-to-session map
+        # so the generic VMRequest schema does not expose infrastructure data.
+        from app.models import QuickPracticeSessionMachine  # noqa: PLC0415
+
+        practice_machine = session.exec(
+            select(QuickPracticeSessionMachine).where(
+                QuickPracticeSessionMachine.vm_request_id == db_request.id
+            )
+        ).first()
+        if practice_machine is not None:
+            ip_reservation_key = (
+                f"quick:{practice_machine.session_id}:{practice_machine.node_key}"
+            )
+    allocated_ip = ip_management_service.allocate_ip(
+        session,
+        new_vmid,
+        purpose,
+        reservation_key=ip_reservation_key,
+    )
 
     plan: dict = {
         "vmid": new_vmid,
@@ -616,6 +743,7 @@ def plan_provision(*, session: Session, db_request) -> dict:
         "ssh_private_key_encrypted": encrypt_value(private_key_pem),
         "ssh_public_key": public_key,
         "allocated_ip": allocated_ip,
+        "ip_reservation_key": ip_reservation_key,
         "net_cfg": net_cfg,
     }
 
@@ -637,6 +765,11 @@ def plan_provision(*, session: Session, db_request) -> dict:
         plan["lxc_clone"] = True
         plan["template_id"] = db_request.template_id
         plan["template_node"] = template_row.node
+        # Course Lab 的 password 是佔位隨機值（憑證以範本內烘焙為準），
+        # 其餘來源（申請單 / 快速範本）為使用者自訂密碼，克隆後必須套用
+        plan["apply_login_password"] = (
+            getattr(db_request, "request_kind", "") != "course"
+        )
         plan["target_storage"] = _resolve_managed_storage(
             session=session,
             node=template_row.node,
@@ -646,6 +779,21 @@ def plan_provision(*, session: Session, db_request) -> dict:
             required_content="rootdir",
         )
     elif db_request.resource_type == "lxc":
+        # 早期防線：vzcreate 前確認目標節點真的看得到這個 vztmpl，
+        # 避免 PVE 端 volume does not exist 的晚期失敗（映射整批查詢
+        # 失敗時為空 map，此時不擋、交由 PVE 把關）。
+        template_node_map = proxmox_service.get_lxc_template_node_map()
+        if (
+            db_request.ostemplate
+            and template_node_map
+            and target_node
+            not in template_node_map.get(str(db_request.ostemplate), set())
+        ):
+            raise ProxmoxError(
+                f"Node '{target_node}' cannot access LXC template "
+                f"'{db_request.ostemplate}'（模板僅存在於："
+                f"{', '.join(sorted(template_node_map.get(str(db_request.ostemplate), set()))) or '無任何節點'}）。"
+            )
         plan["target_storage"] = _resolve_managed_storage(
             session=session,
             node=target_node,
@@ -665,6 +813,8 @@ def plan_provision(*, session: Session, db_request) -> dict:
         plan["username"] = db_request.username
         if db_request.gpu_mapping_id:
             plan["gpu_mapping_id"] = db_request.gpu_mapping_id
+            if getattr(db_request, "gpu_mdev_profile", None):
+                plan["gpu_mdev_profile"] = db_request.gpu_mdev_profile
         plan["target_storage"] = _resolve_managed_storage(
             session=session,
             node=target_node,
@@ -697,7 +847,7 @@ def execute_provision(plan: dict) -> tuple[int, str]:
     target_node = plan["target_node"]
     resource_type = plan["resource_type"]
     hostname = plan["hostname"]
-    pool_name = get_proxmox_settings().pool_name
+    pool_name = get_proxmox_settings_for_node(target_node).pool_name
     created = False
     actual_node = target_node
     net_cfg = plan.get("net_cfg", {})
@@ -718,8 +868,10 @@ def execute_provision(plan: dict) -> tuple[int, str]:
             )
 
             if plan.get("lxc_clone"):
-                # Course Lab：克隆 LXC 範本（linked 優先退 full），克隆後重配置。
-                # LXC 無 cloud-init，登入憑證沿用範本內建帳密。
+                # LXC 範本克隆（linked 優先退 full），克隆後重配置。
+                # LXC 無 cloud-init：使用者自訂密碼須待啟動後以 pct exec 設定
+                # （_set_lxc_root_password）；Course Lab 憑證以範本內烘焙為準，
+                # 不套用（plan["apply_login_password"] = False）。
                 from app.services.template import clone_service  # noqa: PLC0415
 
                 clone_service.clone_with_fallback(
@@ -743,11 +895,22 @@ def execute_provision(plan: dict) -> tuple[int, str]:
                     actual_node, new_vmid, "lxc", **clone_updates
                 )
                 firewall_service.setup_default_rules(actual_node, new_vmid, "lxc")
+                apply_password = bool(
+                    plan.get("apply_login_password") and plan.get("password")
+                )
                 if plan["start_immediately"]:
                     proxmox_service.control(actual_node, new_vmid, "lxc", "start")
-                logger.info(
-                    "Provisioned lxc VMID %s on node %s", new_vmid, actual_node
-                )
+                    if apply_password:
+                        clone_service._set_lxc_root_password(
+                            actual_node, new_vmid, plan["password"]
+                        )
+                elif apply_password:
+                    logger.warning(
+                        "CT %s not started at provision time; custom root "
+                        "password not applied (template credentials remain)",
+                        new_vmid,
+                    )
+                logger.info("Provisioned lxc VMID %s on node %s", new_vmid, actual_node)
                 return new_vmid, actual_node
 
             config = {
@@ -810,7 +973,9 @@ def execute_provision(plan: dict) -> tuple[int, str]:
                         template_node,
                     )
                     actual_node = template_node
-                    fallback_storage = plan.get("fallback_storage", plan["target_storage"])
+                    fallback_storage = plan.get(
+                        "fallback_storage", plan["target_storage"]
+                    )
                     proxmox_service.clone_vm(
                         template_node,
                         plan["template_id"],
@@ -825,14 +990,20 @@ def execute_provision(plan: dict) -> tuple[int, str]:
             config_updates = {
                 "cores": plan["cores"],
                 "memory": plan["memory"],
-                "ciuser": plan.get("username"),
                 "cipassword": plan["password"],
                 "sshkeys": quote(plan.get("ssh_public_key", ""), safe=""),
                 "ciupgrade": 0,
             }
+            # Windows 範本不帶 username（帳號由 cloudbase-init 設定檔固定）
+            if plan.get("username"):
+                config_updates["ciuser"] = plan["username"]
             if allocated_ip and net_cfg and net_cfg.get("bridge_name"):
-                config_updates["net0"] = f"virtio,bridge={net_cfg['bridge_name']},firewall=1"
-                config_updates["ipconfig0"] = f"ip={allocated_ip}/{net_cfg['prefix_len']},gw={net_cfg['gateway']}"
+                config_updates["net0"] = (
+                    f"virtio,bridge={net_cfg['bridge_name']},firewall=1"
+                )
+                config_updates["ipconfig0"] = (
+                    f"ip={allocated_ip}/{net_cfg['prefix_len']},gw={net_cfg['gateway']}"
+                )
                 if net_cfg.get("dns_servers"):
                     config_updates["nameserver"] = net_cfg["dns_servers"]
             else:
@@ -841,28 +1012,17 @@ def execute_provision(plan: dict) -> tuple[int, str]:
                     "請確認 IP 管理子網設定。"
                 )
             if plan.get("gpu_mapping_id"):
-                # Validate GPU availability before assigning
-                from app.services.proxmox import gpu_service
-                try:
-                    gpu_detail = gpu_service.get_gpu_mapping(plan["gpu_mapping_id"])
-                    if gpu_detail.available_count <= 0:
-                        raise ProxmoxError(
-                            f"GPU {plan['gpu_mapping_id']} 已無可用插槽 "
-                            f"(used={gpu_detail.used_count}/{gpu_detail.device_count})"
-                        )
-                except ProxmoxError:
-                    raise
-                except Exception as e:
-                    logger.error("GPU 可用性檢查失敗 (%s): %s", plan["gpu_mapping_id"], e)
-                    raise ProxmoxError(f"無法驗證 GPU '{plan['gpu_mapping_id']}'：{e}")
-                config_updates["hostpci0"] = f"mapping={plan['gpu_mapping_id']}"
-            _ensure_resource_stopped(actual_node, new_vmid, "qemu")
-            proxmox_service.update_config(actual_node, new_vmid, "qemu", **config_updates)
-
-            if plan.get("disk_size"):
-                proxmox_service.resize_disk(
-                    actual_node, new_vmid, "qemu", "scsi0", f"{plan['disk_size']}G"
+                config_updates["hostpci0"] = _build_gpu_hostpci(
+                    plan["gpu_mapping_id"], plan.get("gpu_mdev_profile")
                 )
+            _ensure_resource_stopped(actual_node, new_vmid, "qemu")
+            proxmox_service.update_config(
+                actual_node, new_vmid, "qemu", **config_updates
+            )
+
+            _resize_clone_disk_if_needed(
+                actual_node, new_vmid, plan["template_id"], plan.get("disk_size")
+            )
 
             firewall_service.setup_default_rules(actual_node, new_vmid, "qemu")
             if plan["start_immediately"]:
@@ -871,27 +1031,39 @@ def execute_provision(plan: dict) -> tuple[int, str]:
         if created:
             # Best-effort: drop any firewall rules created earlier on this VMID
             try:
-                rules = firewall_service.get_vm_firewall_rules(actual_node, new_vmid, resource_type)
+                rules = firewall_service.get_vm_firewall_rules(
+                    actual_node, new_vmid, resource_type
+                )
                 for rule in sorted(rules, key=lambda r: r.get("pos", 0), reverse=True):
                     pos = rule.get("pos")
                     if pos is not None:
                         try:
-                            firewall_service.delete_rule_by_pos(actual_node, new_vmid, resource_type, int(pos))
+                            firewall_service.delete_rule_by_pos(
+                                actual_node, new_vmid, resource_type, int(pos)
+                            )
                         except Exception as fw_err:
                             logger.debug(
                                 "execute_provision rollback: rule pos=%s on VMID %s failed: %s",
-                                pos, new_vmid, fw_err,
+                                pos,
+                                new_vmid,
+                                fw_err,
                             )
             except Exception as fw_err:
-                logger.debug("Firewall cleanup skipped for VMID %s: %s", new_vmid, fw_err)
+                logger.debug(
+                    "Firewall cleanup skipped for VMID %s: %s", new_vmid, fw_err
+                )
             _cleanup_failed_resource(actual_node, new_vmid, resource_type)
         raise
 
-    logger.info("Provisioned %s VMID %s on node %s", resource_type, new_vmid, actual_node)
+    logger.info(
+        "Provisioned %s VMID %s on node %s", resource_type, new_vmid, actual_node
+    )
     return new_vmid, actual_node
 
 
-def provision_from_request(*, session: Session, db_request) -> tuple[int, str | None, str | None]:
+def provision_from_request(
+    *, session: Session, db_request
+) -> tuple[int, str | None, str | None]:
     """Legacy wrapper: plan + execute in one call (session kept open).
 
     Prefer plan_provision() + execute_provision() for new code.
@@ -914,7 +1086,6 @@ def provision_from_request(*, session: Session, db_request) -> tuple[int, str | 
         template_id=getattr(db_request, "template_id", None),
         ssh_private_key_encrypted=plan.get("ssh_private_key_encrypted"),
         ssh_public_key=plan.get("ssh_public_key"),
-        service_template_slug=getattr(db_request, "service_template_slug", None),
         request_id=getattr(db_request, "id", None),
         commit=False,
     )
@@ -922,6 +1093,7 @@ def provision_from_request(*, session: Session, db_request) -> tuple[int, str | 
 
 
 def get_lxc_templates() -> list[TemplateSchema]:
+    node_map = proxmox_service.get_lxc_template_node_map()
     templates: list[dict] = []
     for node in proxmox_service.get_available_nodes():
         node_name = node.get("node") or node.get("name")
@@ -938,15 +1110,101 @@ def get_lxc_templates() -> list[TemplateSchema]:
             volid=t["volid"],
             format=t.get("format", ""),
             size=t.get("size", 0),
+            nodes=sorted(node_map.get(str(t["volid"]), set())),
         )
         for t in templates
         if t.get("content") == "vztmpl"
     ]
 
 
+def _template_disk_gb(template: dict) -> int:
+    """cluster resource 的 maxdisk 換算 GB（無條件進位）；缺值回 0。"""
+    maxdisk = template.get("maxdisk")
+    return -(-int(maxdisk) // (1024**3)) if maxdisk else 0
+
+
+def _resize_clone_disk_if_needed(
+    node: str, vmid: int, template_id: int, disk_size: int | None
+) -> None:
+    """克隆磁碟只能放大：requested <= 範本大小時跳過 resize。
+
+    PVE 對縮小磁碟直接報錯；範本本體大於申請值時（例如範本超過表單
+    上限）克隆機天生就是範本大小，跳過即可。範本查不到時照舊 resize，
+    交由 PVE 端把關。
+    """
+    if not disk_size:
+        return
+    template_gb = 0
+    try:
+        template_gb = _template_disk_gb(
+            proxmox_service.find_vm_template(template_id)
+        )
+    except Exception:
+        pass
+    if template_gb and int(disk_size) <= template_gb:
+        logger.info(
+            "Skip disk resize for VM %d: requested %dG <= template %dG",
+            vmid,
+            int(disk_size),
+            template_gb,
+        )
+        return
+    proxmox_service.resize_disk(node, vmid, "qemu", "scsi0", f"{int(disk_size)}G")
+
+
+def _template_ostype(vm: dict) -> str | None:
+    """讀範本 config 的 ostype；讀不到不阻擋清單（回 None）。"""
+    try:
+        config = proxmox_service.get_config(vm["node"], int(vm["vmid"]), "qemu")
+    except Exception:
+        return None
+    ostype = config.get("ostype")
+    return str(ostype) if ostype else None
+
+
+def is_windows_template(template_id: int) -> bool:
+    """範本 ostype 是否為 Windows（w 開頭）；查不到一律當非 Windows。
+
+    Windows 範本的帳號由 cloudbase-init 設定檔固定，申請單可不帶 username。
+    """
+    try:
+        template = proxmox_service.find_vm_template(template_id)
+    except Exception:
+        return False
+    ostype = _template_ostype(template)
+    return bool(ostype and ostype.startswith("w"))
+
+
 def get_vm_templates() -> list[VMTemplateSchema]:
-    all_vms = proxmox_service.get_vm_templates()
-    return [
-        VMTemplateSchema(vmid=vm["vmid"], name=vm["name"], node=vm["node"])
-        for vm in all_vms
+    """VM 來源用的 PVE 範本清單。
+
+    pool 內的 LXC 範本同樣是 template=1，但它們不能當 VM 來源（ostype 也讀
+    不到），所以在這裡就濾掉，避免出現在申請表單的虛擬機清單裡。
+    """
+    all_vms = [
+        vm
+        for vm in proxmox_service.get_vm_templates()
+        if str(vm.get("type") or "qemu").lower() != "lxc"
     ]
+    templates: list[VMTemplateSchema] = []
+    for vm in all_vms:
+        ostype = _template_ostype(vm)
+        # cluster resources 的 maxcpu/maxmem/maxdisk 即範本自身規格
+        maxcpu = vm.get("maxcpu")
+        maxmem = vm.get("maxmem")
+        templates.append(
+            VMTemplateSchema(
+                vmid=vm["vmid"],
+                name=vm["name"],
+                node=vm["node"],
+                ostype=ostype,
+                # PVE 的 Windows ostype（wxp/w2k*/wvista/win7~11）皆以 w 開頭，
+                # Linux 為 l24/l26，不衝突
+                is_windows=bool(ostype and ostype.startswith("w")),
+                cores=int(maxcpu) if maxcpu else None,
+                memory_mb=int(maxmem) // (1024 * 1024) if maxmem else None,
+                # 磁碟無條件進位：克隆後 resize 只能放大，下限不可低估
+                disk_gb=_template_disk_gb(vm) or None,
+            )
+        )
+    return templates

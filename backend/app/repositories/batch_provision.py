@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.models.batch_provision import (
     BatchProvisionJob,
@@ -17,7 +17,7 @@ from app.models.resource import Resource
 def create_job(
     *,
     session: Session,
-    group_id: uuid.UUID,
+    teaching_class_id: uuid.UUID,
     initiated_by: uuid.UUID,
     resource_type: str,
     hostname_prefix: str,
@@ -30,7 +30,7 @@ def create_job(
 ) -> BatchProvisionJob:
     now = datetime.now(UTC)
     job = BatchProvisionJob(
-        group_id=group_id,
+        teaching_class_id=teaching_class_id,
         initiated_by=initiated_by,
         resource_type=resource_type,
         hostname_prefix=hostname_prefix,
@@ -101,6 +101,48 @@ def transition_pending_review(
     return job
 
 
+def transition_pending_reviews(
+    *,
+    session: Session,
+    job_ids: list[uuid.UUID],
+    reviewer_id: uuid.UUID,
+    decision: BatchProvisionJobStatus,
+    review_comment: str | None = None,
+) -> list[BatchProvisionJob]:
+    """Atomically review every job in one teaching-class submission."""
+    import sqlalchemy as sa
+
+    wanted = list(dict.fromkeys(job_ids))
+    if not wanted:
+        return []
+    now = datetime.now(UTC)
+    result = session.exec(
+        sa.update(BatchProvisionJob)
+        .where(
+            col(BatchProvisionJob.id).in_(wanted),
+            BatchProvisionJob.status == BatchProvisionJobStatus.pending_review,
+        )
+        .values(
+            status=decision,
+            reviewer_id=reviewer_id,
+            reviewed_at=now,
+            review_comment=(review_comment or None),
+        )
+    )
+    if result.rowcount != len(wanted):
+        session.rollback()
+        return []
+    session.commit()
+    jobs = list(
+        session.exec(
+            select(BatchProvisionJob).where(col(BatchProvisionJob.id).in_(wanted))
+        ).all()
+    )
+    for job in jobs:
+        session.refresh(job)
+    return jobs
+
+
 def mark_reviewed(
     *,
     session: Session,
@@ -150,7 +192,9 @@ def get_job_tasks(*, session: Session, job_id: uuid.UUID) -> list[BatchProvision
     return list(session.exec(stmt).all())
 
 
-def get_pending_tasks(*, session: Session, job_id: uuid.UUID) -> list[BatchProvisionTask]:
+def get_pending_tasks(
+    *, session: Session, job_id: uuid.UUID
+) -> list[BatchProvisionTask]:
     stmt = (
         select(BatchProvisionTask)
         .where(
@@ -171,9 +215,7 @@ def update_task_running(*, session: Session, task_id: uuid.UUID) -> None:
         session.commit()
 
 
-def update_task_done(
-    *, session: Session, task_id: uuid.UUID, vmid: int
-) -> None:
+def update_task_done(*, session: Session, task_id: uuid.UUID, vmid: int) -> None:
     task = session.get(BatchProvisionTask, task_id)
     if task:
         task.status = BatchProvisionTaskStatus.completed
@@ -184,9 +226,7 @@ def update_task_done(
         session.commit()
 
 
-def update_task_failed(
-    *, session: Session, task_id: uuid.UUID, error: str
-) -> None:
+def update_task_failed(*, session: Session, task_id: uuid.UUID, error: str) -> None:
     task = session.get(BatchProvisionTask, task_id)
     if task:
         task.status = BatchProvisionTaskStatus.failed
@@ -221,18 +261,42 @@ def update_job_status(
     job = session.get(BatchProvisionJob, job_id)
     if job:
         job.status = status
-        if status in (BatchProvisionJobStatus.completed, BatchProvisionJobStatus.failed):
+        if status in (
+            BatchProvisionJobStatus.completed,
+            BatchProvisionJobStatus.failed,
+        ):
             job.finished_at = datetime.now(UTC)
         session.add(job)
         session.commit()
 
 
-def list_jobs_by_group(
-    *, session: Session, group_id: uuid.UUID
+def transition_job_to_running(*, session: Session, job_id: uuid.UUID) -> bool:
+    """Atomically start an approved/pending job without reviving a cancelled job."""
+    import sqlalchemy as sa
+
+    result = session.exec(
+        sa.update(BatchProvisionJob)
+        .where(
+            BatchProvisionJob.id == job_id,
+            col(BatchProvisionJob.status).in_(
+                [BatchProvisionJobStatus.approved, BatchProvisionJobStatus.pending]
+            ),
+        )
+        .values(status=BatchProvisionJobStatus.running)
+    )
+    if result.rowcount == 0:
+        session.rollback()
+        return False
+    session.commit()
+    return True
+
+
+def list_jobs_by_teaching_class(
+    *, session: Session, teaching_class_id: uuid.UUID
 ) -> list[BatchProvisionJob]:
     stmt = (
         select(BatchProvisionJob)
-        .where(BatchProvisionJob.group_id == group_id)
+        .where(BatchProvisionJob.teaching_class_id == teaching_class_id)
         .order_by(BatchProvisionJob.created_at.desc())
     )
     return list(session.exec(stmt).all())
@@ -251,8 +315,16 @@ def clear_task_vmid_references(
         return 0
 
     for task in tasks:
+        if task.status == BatchProvisionTaskStatus.completed:
+            job = session.get(BatchProvisionJob, task.job_id)
+            if job is not None:
+                job.done = max(0, job.done - 1)
+                job.failed_count += 1
+                session.add(job)
         task.vmid = None
         task.resource_vmid = None
+        task.status = BatchProvisionTaskStatus.failed
+        task.error = "Provisioned resource was removed and requires repair"
         session.add(task)
 
     if commit:

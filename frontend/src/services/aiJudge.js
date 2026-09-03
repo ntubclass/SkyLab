@@ -8,12 +8,25 @@ import {
   apiPostMultipart,
 } from "./api";
 
+// 腳本產生會依序執行 generation、policy/quality 修正與 AI reviewer，
+// 不能沿用一般 API 的 15 秒 request budget。後端每次 vLLM 呼叫仍有自己的 timeout。
+const SCRIPT_GENERATION_TIMEOUT_MS = 7 * 60 * 1000;
+
 /** 評分環境模板選項 */
 export const TEMPLATE_OPTIONS = [
-  { key: "linux", label: "一般 Linux/LXC" },
-  { key: "python", label: "Python" },
   { key: "n8n", label: "n8n" },
+  { key: "python", label: "Python" },
+  { key: "postgresql", label: "PostgreSQL" },
+  { key: "linux", label: "一般 Linux/LXC" },
 ];
+
+/** 正式工作區與獨立編輯頁共用的整表潤飾動作。 */
+export const RUBRIC_POLISH_PROMPT =
+  "請在不改變原始評分目標的前提下潤飾目前評分表：讓每個項目的成功條件與證據清楚到下一層檢查 AI 能理解。將目前評分環境視為主要情境而非硬性範圍，逐項查找平台所有已啟用的受控檢查能力；若缺少工作目錄、執行命令或成功條件，請明確向我詢問，不要改成較容易但不同的檢查目標，也不要只因單一項目跨環境就要求切換整份評分表環境";
+
+/** 評分項目異動後，重新判斷目前環境能自動檢查到什麼程度。 */
+export const RUBRIC_REASSESS_PROMPT =
+  "請在不改變原始評分目標的前提下重新評估各項目的可自動偵測程度，更新偵測分類、偵測方式、替代建議與評分計劃書。將目前評分環境視為主要情境，個別項目可使用平台其他已啟用的受控能力；若缺少工作目錄、執行命令或成功條件，請明確向我詢問，不要改成不同的檢查目標，也不要只因單一項目跨環境就要求切換整份評分表環境";
 
 export function getTemplateLabel(templateKey) {
   return (
@@ -32,42 +45,202 @@ export function rubricToContext(analysis) {
   });
 }
 
+/** refine action 的內部指令仍保留在 session 歷史，但不在教師聊天室呈現。 */
+export function shouldDisplayChatMessage(message) {
+  const isKnownInternalPrompt = [RUBRIC_POLISH_PROMPT, RUBRIC_REASSESS_PROMPT].includes(
+    message?.content,
+  );
+  return !message?.hidden && !message?.metadata_json?.ui_hidden && !isKnownInternalPrompt;
+}
+
 export const AiJudgeService = {
-  /* ── 評分表文件 ── */
+  /* ── 持久化檢查 Session ── */
 
-  /** 列出群組已保存的評分表 */
-  listFiles(groupId) {
-    return apiGet(`/api/v1/groups/${groupId}/judge/files/`);
-  },
-
-  /**
-   * 上傳評分表文件並觸發 AI 分析。
-   * 同名檔案已存在時後端回 409，可帶 conflictStrategy（"overwrite" | "copy"）重送。
-   */
-  uploadFile(groupId, file, templateKey, conflictStrategy) {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("template_key", templateKey);
-    if (conflictStrategy) formData.append("conflict_strategy", conflictStrategy);
-    return apiPostMultipart(`/api/v1/groups/${groupId}/judge/files/`, formData);
-  },
-
-  /** 更新已保存評分表的分析結果（項目編輯後持久化） */
-  updateFileAnalysis(groupId, fileId, analysis) {
-    return apiPatch(
-      `/api/v1/groups/${groupId}/judge/files/${fileId}/analysis`,
-      { analysis },
+  listSessions(classId, status = "active") {
+    return apiGet(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/?status=${encodeURIComponent(status)}`,
     );
   },
 
+  createSession(classId, {
+    title,
+    teachingClassWeekId = null,
+    selectedFileId = null,
+    creationMode,
+    rubricName,
+    environmentKeys,
+  }) {
+    const payload = {
+      title,
+      selected_file_id: selectedFileId,
+    };
+    if (teachingClassWeekId) payload.teaching_class_week_id = teachingClassWeekId;
+    if (creationMode) payload.creation_mode = creationMode;
+    if (rubricName !== undefined) payload.rubric_name = rubricName;
+    if (environmentKeys !== undefined) payload.environment_keys = environmentKeys;
+    return apiPost(`/api/v1/teaching-classes/${classId}/judge/sessions/`, payload);
+  },
+
+  createBlankSession(classId, {
+    title = "未命名檢查",
+    rubricName = "空白評分表",
+    environmentKeys = ["n8n"],
+  } = {}) {
+    return this.createSession(classId, {
+      title,
+      selectedFileId: null,
+      creationMode: "blank",
+      rubricName,
+      environmentKeys,
+    });
+  },
+
+  getSession(classId, sessionId) {
+    return apiGet(`/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}`);
+  },
+
+  updateSession(classId, sessionId, changes) {
+    return apiPatch(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}`,
+      changes,
+    );
+  },
+
+  forkSession(classId, sessionId, title = null) {
+    return apiPost(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}/fork`,
+      title ? { title } : {},
+    );
+  },
+
+  archiveSession(classId, sessionId) {
+    return apiPost(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}/archive`,
+      {},
+    );
+  },
+
+  deleteSession(classId, sessionId) {
+    return apiDelete(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}`,
+    );
+  },
+
+  listSessionMessages(classId, sessionId, before = null) {
+    const query = before ? `?before=${encodeURIComponent(before)}` : "";
+    return apiGet(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}/messages${query}`,
+    );
+  },
+
+  clearSessionMessages(classId, sessionId) {
+    return apiDelete(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}/messages`,
+    );
+  },
+
+  sendSessionMessage(
+    classId,
+    sessionId,
+    content,
+    analysisRevision = null,
+    { isRefine = false } = {},
+  ) {
+    const payload = { content };
+    if (analysisRevision !== null && analysisRevision !== undefined) {
+      payload.analysis_revision = analysisRevision;
+    }
+    if (isRefine) payload.is_refine = true;
+    return apiPost(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}/messages`,
+      payload,
+    );
+  },
+
+  createSessionScript(classId, sessionId) {
+    return apiPost(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}/scripts`,
+      {},
+      { timeoutMs: SCRIPT_GENERATION_TIMEOUT_MS },
+    );
+  },
+
+  listSessionRuns(classId, sessionId) {
+    return apiGet(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}/runs`,
+    );
+  },
+
+  getSessionRun(classId, sessionId, runId) {
+    return apiGet(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}/runs/${runId}`,
+    );
+  },
+
+  createSessionRun(classId, sessionId, scriptId, targetVmids) {
+    return apiPost(
+      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}/scripts/${scriptId}/runs`,
+      { target_scope: "manual", target_vmids: targetVmids },
+    );
+  },
+
+  /* ── 評分表文件 ── */
+
+  /** 列出班級已保存的評分表 */
+  listFiles(classId) {
+    return apiGet(`/api/v1/teaching-classes/${classId}/judge/files/`);
+  },
+
+  /**
+   * 上傳評分表文件並觸發 AI 分析；environmentKeys 的第一項為主要情境。
+   * 同名檔案已存在時後端回 409，可帶 conflictStrategy（"overwrite" | "copy"）重送。
+   */
+  uploadFile(classId, file, templateKey, conflictStrategy, environmentKeys = null) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("template_key", templateKey);
+    const selectedEnvironments = Array.isArray(environmentKeys) && environmentKeys.length
+      ? environmentKeys
+      : [templateKey];
+    selectedEnvironments.forEach((key) => formData.append("environment_keys", key));
+    if (conflictStrategy) formData.append("conflict_strategy", conflictStrategy);
+    return apiPostMultipart(`/api/v1/teaching-classes/${classId}/judge/files/`, formData);
+  },
+
+  /** 更新已保存評分表的分析結果（項目編輯後持久化） */
+  updateFileAnalysis(classId, fileId, analysis, expectedRevision = null) {
+    const payload = { analysis };
+    if (expectedRevision !== null && expectedRevision !== undefined) {
+      payload.expected_revision = expectedRevision;
+    }
+    return apiPatch(
+      `/api/v1/teaching-classes/${classId}/judge/files/${fileId}/analysis`,
+      payload,
+    );
+  },
+
+  updateFileMetadata(classId, fileId, metadata) {
+    return apiPatch(
+      `/api/v1/teaching-classes/${classId}/judge/files/${fileId}`,
+      metadata,
+    );
+  },
+
+  createBlankFile(classId, { displayName, environmentKeys }) {
+    return apiPost(`/api/v1/teaching-classes/${classId}/judge/files/blank`, {
+      display_name: displayName,
+      environment_keys: environmentKeys,
+    });
+  },
+
   /** 下載評分表原始檔 */
-  downloadFile(groupId, fileId) {
-    return apiGetBlob(`/api/v1/groups/${groupId}/judge/files/${fileId}/download`);
+  downloadFile(classId, fileId) {
+    return apiGetBlob(`/api/v1/teaching-classes/${classId}/judge/files/${fileId}/download`);
   },
 
   /** 刪除評分表（原始檔＋分析結果） */
-  deleteFile(groupId, fileId) {
-    return apiDelete(`/api/v1/groups/${groupId}/judge/files/${fileId}`);
+  deleteFile(classId, fileId) {
+    return apiDelete(`/api/v1/teaching-classes/${classId}/judge/files/${fileId}`);
   },
 
   /* ── AI 對話與匯出 ── */
@@ -89,53 +262,59 @@ export const AiJudgeService = {
 
   /* ── 收集腳本 ── */
 
-  /** 列出群組收集腳本 */
-  listScripts(groupId) {
-    return apiGet(`/api/v1/groups/${groupId}/judge/scripts/`);
+  /** 列出班級收集腳本 */
+  listScripts(classId, sessionId = null) {
+    const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+    return apiGet(`/api/v1/teaching-classes/${classId}/judge/scripts/${query}`);
   },
 
   /** 由評分表快照產生受管收集腳本（後端會接著跑 policy 與 AI 審查） */
-  createScript(groupId, { name, templateKey, rubricSnapshot, sourceFileId = null }) {
-    return apiPost(`/api/v1/groups/${groupId}/judge/scripts/`, {
-      name,
-      template_key: templateKey,
-      rubric_snapshot: rubricSnapshot,
-      source_file_id: sourceFileId,
-    });
+  createScript(classId, { name, templateKey, rubricSnapshot, sourceFileId = null }) {
+    return apiPost(
+      `/api/v1/teaching-classes/${classId}/judge/scripts/`,
+      {
+        name,
+        template_key: templateKey,
+        rubric_snapshot: rubricSnapshot,
+        source_file_id: sourceFileId,
+      },
+      { timeoutMs: SCRIPT_GENERATION_TIMEOUT_MS },
+    );
   },
 
   /** 重新生成腳本（可帶新的 rubric 快照） */
-  regenerateScript(groupId, scriptId, rubricSnapshot = null) {
+  regenerateScript(classId, scriptId, rubricSnapshot = null) {
     return apiPost(
-      `/api/v1/groups/${groupId}/judge/scripts/${scriptId}/regenerate`,
+      `/api/v1/teaching-classes/${classId}/judge/scripts/${scriptId}/regenerate`,
       { rubric_snapshot: rubricSnapshot },
+      { timeoutMs: SCRIPT_GENERATION_TIMEOUT_MS },
     );
   },
 
   /** 核准腳本（status: reviewed → approved） */
-  approveScript(groupId, scriptId) {
-    return apiPost(`/api/v1/groups/${groupId}/judge/scripts/${scriptId}/approve`, {});
+  approveScript(classId, scriptId) {
+    return apiPost(`/api/v1/teaching-classes/${classId}/judge/scripts/${scriptId}/approve`, {});
   },
 
   /** 刪除腳本 */
-  deleteScript(groupId, scriptId) {
-    return apiDelete(`/api/v1/groups/${groupId}/judge/scripts/${scriptId}`);
+  deleteScript(classId, scriptId) {
+    return apiDelete(`/api/v1/teaching-classes/${classId}/judge/scripts/${scriptId}`);
   },
 
   /* ── 腳本執行 ── */
 
   /** 對指定 VMID 建立腳本執行任務 */
-  createScriptRun(groupId, scriptId, targetVmids) {
-    return apiPost(`/api/v1/groups/${groupId}/judge/scripts/${scriptId}/runs`, {
+  createScriptRun(classId, scriptId, targetVmids) {
+    return apiPost(`/api/v1/teaching-classes/${classId}/judge/scripts/${scriptId}/runs`, {
       target_scope: "manual",
       target_vmids: targetVmids,
     });
   },
 
   /** 查詢執行任務進度與結果（前端輪詢用） */
-  getScriptRun(groupId, scriptId, runId) {
+  getScriptRun(classId, scriptId, runId) {
     return apiGet(
-      `/api/v1/groups/${groupId}/judge/scripts/${scriptId}/runs/${runId}`,
+      `/api/v1/teaching-classes/${classId}/judge/scripts/${scriptId}/runs/${runId}`,
     );
   },
 };

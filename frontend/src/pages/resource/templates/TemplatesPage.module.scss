@@ -4,35 +4,9 @@
   padding: $spacing-8 $spacing-16;
   flex: 1;
 
-  @include respond-to(md) {
+  @media (min-width: $breakpoint-sidebar) {
     padding: 0;
   }
-}
-
-.pageHeader {
-  @include flex-between;
-  flex-wrap: wrap;
-  gap: $spacing-16;
-}
-
-.pageHeading {
-  @include flex-column;
-  gap: $spacing-4;
-}
-
-.pageTitle {
-  font-size: $font-size-24;
-  font-weight: $font-weight-700;
-  color: var(--color-text-primary);
-
-  @include respond-to(sm) {
-    font-size: $font-size-28;
-  }
-}
-
-.pageSubtitle {
-  font-size: $font-size-14;
-  color: var(--color-text-secondary);
 }
 
 .pageActions {
@@ -51,18 +25,6 @@
   overflow: visible;
 }
 
-.cardHeader {
-  @include flex-between;
-  gap: $spacing-8;
-  padding: $spacing-16;
-}
-
-.cardTitle {
-  font-size: $font-size-16;
-  font-weight: $font-weight-700;
-  color: var(--color-text-primary);
-}
-
 .stateText {
   padding: $spacing-32 $spacing-16;
   text-align: center;
@@ -72,38 +34,19 @@
 
 /* ── 表格 ── */
 .table {
-  width: 100%;
-  border-collapse: collapse;
+  @include table-base;
 }
 
 .th {
-  padding: $spacing-8 $spacing-16;
-  font-size: $font-size-12;
-  font-weight: $font-weight-500;
-  color: var(--color-text-muted);
-  text-align: left;
-  background: var(--color-hover);
-  border-bottom: 1px solid var(--color-border);
-  white-space: nowrap;
+  @include table-th;
 }
 
 .tr {
-  transition: background $transition-base;
-
-  &:not(:last-child) {
-    border-bottom: 1px solid var(--color-divider);
-  }
-
-  &:hover {
-    background: var(--color-hover);
-  }
+  @include table-tr;
 }
 
 .td {
-  padding: $spacing-8 $spacing-16;
-  font-size: $font-size-14;
-  color: var(--color-text-primary);
-  vertical-align: middle;
+  @include table-td;
 }
 
 .tdMenu {
@@ -179,7 +122,7 @@
 .badge_ok    { background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success); }
 .badge_err   { background: color-mix(in srgb, var(--color-danger)  12%, transparent); color: var(--color-danger); }
 .badge_info  { background: color-mix(in srgb, var(--color-info)    12%, transparent); color: var(--color-info); }
-.badge_muted { background: var(--color-hover); color: var(--color-text-muted); }
+.badge_muted { background: var(--color-hover); color: var(--color-status-neutral); }
 
 /* ── 列操作選單 ── */
 .menuWrap {
@@ -202,7 +145,21 @@
   }
 }
 
+@keyframes menuIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.rowMenuOut {
+  animation: none !important;
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+}
+
 .rowMenu {
+  animation: menuIn 0.13s ease;
+  transition: opacity 0.13s ease, transform 0.13s ease;
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
@@ -303,67 +260,6 @@
   justify-content: center;
 }
 
-/* ── 任務卡 ── */
-.taskList {
-  @include flex-column;
-  gap: $spacing-16;
-  padding: 0 $spacing-16 $spacing-16;
-}
-
-.taskRow {
-  @include flex-column;
-  gap: $spacing-4;
-}
-
-.taskHead {
-  @include flex-between;
-  gap: $spacing-8;
-}
-
-.taskLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: $spacing-8;
-  font-size: $font-size-14;
-  color: var(--color-text-primary);
-  min-width: 0;
-}
-
-.taskLink {
-  font-size: $font-size-12;
-  color: var(--color-primary);
-  cursor: pointer;
-  white-space: nowrap;
-
-  &:hover {
-    text-decoration: underline;
-  }
-}
-
-.taskError {
-  font-size: $font-size-12;
-  color: var(--color-danger);
-}
-
-.progressBar {
-  width: 100%;
-  height: 6px;
-  border-radius: $radius-pill;
-  background: var(--color-hover);
-  overflow: hidden;
-}
-
-.progressFill {
-  height: 100%;
-  border-radius: $radius-pill;
-  background: var(--color-info);
-  transition: width $transition-slow;
-}
-
-.progressFill_danger {
-  background: var(--color-danger);
-}
-
 /* ── 按鈕 ── */
 %btn-base {
   display: inline-flex;
@@ -407,11 +303,11 @@
 
 .btnDanger {
   @extend %btn-base;
-  background: #dc3545;
-  color: #fff;
+  background: var(--color-danger);
+  color: var(--color-text-on-primary);
 
   &:hover:not(:disabled) {
-    background: #b91c1c;
+    background: var(--color-danger-dark);
   }
 }
 
@@ -424,9 +320,28 @@
   z-index: 300;
   @include flex-center;
   padding: $spacing-16;
+  animation: fadeIn 0.15s ease;
+  transition: opacity 0.15s ease;
+}
+
+.modalOverlayOut {
+  animation: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .modal {
+  animation: slideUp 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
   @include flex-column;
   gap: $spacing-16;
   width: 100%;
@@ -529,28 +444,49 @@
   }
 }
 
-.checkLabel {
-  @include text-truncate;
+.visibilityOptions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $spacing-8;
 }
 
-.groupBox {
-  @include flex-column;
+.visibilityOption {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
   gap: $spacing-8;
   padding: $spacing-8 $spacing-16;
   border: 1px solid var(--color-border);
   border-radius: $radius-8;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: border-color $transition-base, background-color $transition-base;
+
+  input {
+    width: auto;
+    margin-top: 2px;
+    accent-color: var(--color-primary);
+  }
+
+  span {
+    @include flex-column;
+    min-width: 0;
+    gap: 3px;
+  }
+
+  strong {
+    font-size: $font-size-14;
+  }
+
+  small {
+    color: var(--color-text-muted);
+    font-size: $font-size-12;
+  }
 }
 
-.groupGrid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: $spacing-8;
-  max-height: 160px;
-  overflow-y: auto;
-
-  @include respond-to(sm) {
-    grid-template-columns: 1fr 1fr;
-  }
+.visibilityOptionActive {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 7%, transparent);
 }
 
 .tripleGrid {
@@ -566,5 +502,158 @@
 
   @include respond-to(sm) {
     grid-template-columns: minmax(0, 1fr) 120px;
+  }
+}
+
+/* ── 滑桿：克隆時調整資源規格 ── */
+.slider {
+  width: 100%;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.sliderTicks {
+  position: relative;
+  height: 16px;
+  font-size: $font-size-12;
+  color: var(--color-text-muted);
+  margin-top: -2px;
+
+  span {
+    position: absolute;
+    transform: translateX(-50%);
+    white-space: nowrap;
+
+    &:first-child { transform: translateX(0); }
+    &:last-child  { transform: translateX(-100%); }
+  }
+}
+
+.sliderValue {
+  font-size: 13px;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.sliderLabelRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+/* ── 磁碟固定顯示 ── */
+.diskFixed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--color-hover);
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+/* ── 範本 icon ── */
+.iconThumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--color-hover);
+}
+
+.iconThumbSmall {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--color-hover);
+}
+
+/* ── 附件（使用手冊） ── */
+.attachList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attachItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.attachName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachSize {
+  color: var(--color-text-muted);
+  font-size: $font-size-12;
+  flex-shrink: 0;
+}
+
+.attachBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  color: var(--color-primary);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+  flex-shrink: 0;
+
+  &:hover { background: var(--color-hover); }
+  &:disabled { opacity: 0.5; cursor: default; }
+}
+
+.attachBtnDanger {
+  color: var(--color-danger);
+}
+
+/* ── 政策提示 ── */
+.policyNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.catalogActions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+
+  > * { flex: 1; }
+}
+
+/* ── 未填欄位：紅框 ── */
+.fieldInvalid {
+  input,
+  textarea,
+  select {
+    border-color: var(--color-danger);
+
+    &:focus {
+      border-color: var(--color-danger);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-danger) 18%, transparent);
+    }
   }
 }

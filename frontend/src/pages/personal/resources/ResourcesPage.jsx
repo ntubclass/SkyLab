@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../../contexts/AuthContext";
 import styles from "./ResourcesPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import PowerMenu from "../../../components/PowerMenu/PowerMenu";
+import SharedEmptyState from "../../../components/EmptyState/EmptyState";
 import { ResourcesService } from "../../../services/resources";
 import {
   PENDING_POLL_INTERVAL,
@@ -14,16 +18,21 @@ import useAutoRefresh from "../../../hooks/useAutoRefresh";
 import TerminalDialog from "./TerminalDialog";
 import VncDialog from "./VncDialog";
 import QuotaUsageBar from "../../../components/Teaching/QuotaUsageBar";
-import PairInvitesCard from "../../../components/Teaching/PairInvitesCard";
-import ClassroomWatchDialog from "../../../components/Classroom/ClassroomWatchDialog";
+import PageHeader from "../../../components/PageHeader/PageHeader";
+import { QuickPracticeService } from "../../../services/quickPractice";
+import { buildEnvironmentGroups, groupedResourceKeys } from "../../../utils/environmentGroups";
 
 /* ── Constants ── */
 const STATUS_MAP = {
   scheduled:    { label: "已排程",   color: "info",    icon: "event"          },
   provisioning: { label: "建立中",   color: "info",    icon: "settings"       },
+  partial_failed:{ label: "需要處理", color: "danger",  icon: "error_outline"  },
   running:      { label: "執行中",   color: "success", icon: "play_circle"    },
+  stopping:     { label: "準備回收", color: "muted",   icon: "power_settings_new" },
+  reclaiming:   { label: "回收中",   color: "danger",  icon: "delete_sweep"   },
   stopped:      { label: "已關機",   color: "muted",   icon: "stop_circle"    },
   paused:       { label: "已暫停",   color: "muted",   icon: "pause_circle"   },
+  deleting:     { label: "刪除中",   color: "danger",  icon: "hourglass_empty"},
   failed:       { label: "建立失敗", color: "danger",  icon: "error_outline"  },
   deleted:      { label: "已刪除",   color: "danger",  icon: "delete_forever" },
   unknown:      { label: "狀態未知", color: "muted",   icon: "help_outline"   },
@@ -57,19 +66,6 @@ function StatusBadge({ status }) {
     <span className={`${styles.badge} ${styles[`badge_${s.color}`]}`}>
       {s.label}
     </span>
-  );
-}
-
-function InfoRow({ icon, label, value }) {
-  if (!value) return null;
-  return (
-    <div className={styles.infoRow}>
-      <span className={styles.infoLabel}>
-        <MIcon name={icon} size={12} />
-        {label}
-      </span>
-      <span className={styles.infoValue}>{value}</span>
-    </div>
   );
 }
 
@@ -113,59 +109,7 @@ function ConfirmModal({ title, desc, confirmLabel = "確定", danger = false, lo
   );
 }
 
-/* ── Power dropdown ── */
-function PowerMenu({ resource, actionLoading, onControl, onDeleteClick, onClose, anchorRef, closing }) {
-  const ref = useRef(null);
-
-  useEffect(() => {
-    function handler(e) {
-      if (!ref.current?.contains(e.target) && !anchorRef?.current?.contains(e.target)) onClose();
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [onClose, anchorRef]);
-
-  const isRunning = resource.status === "running";
-  const isStopped = resource.status === "stopped" || resource.status === "paused";
-
-  return (
-    <div
-      ref={ref}
-      className={`${styles.powerMenu} ${closing ? styles.powerMenuOut : ""}`}
-    >
-      <div className={styles.powerMenuTitle}>電源控制</div>
-      <div className={styles.powerMenuGrid}>
-        <button type="button" className={styles.powerMenuItem}
-          disabled={!isStopped || !!actionLoading} onClick={() => { onClose(); onControl("start"); }}>
-          <span style={{ color: "var(--color-success)", lineHeight: 1 }}><MIcon name="play_arrow" size={15} /></span>
-          啟動
-        </button>
-        <button type="button" className={`${styles.powerMenuItem} ${styles.powerMenuItemWarn}`}
-          disabled={!isRunning || !!actionLoading} onClick={() => { onClose(); onControl("stop"); }}>
-          <MIcon name="stop" size={15} />強制停止
-        </button>
-        <button type="button" className={styles.powerMenuItem}
-          disabled={!isRunning || !!actionLoading} onClick={() => { onClose(); onControl("shutdown"); }}>
-          <MIcon name="power_settings_new" size={15} />關機
-        </button>
-        <button type="button" className={`${styles.powerMenuItem} ${styles.powerMenuItemWarn}`}
-          disabled={!isRunning || !!actionLoading} onClick={() => { onClose(); onControl("reset"); }}>
-          <MIcon name="restart_alt" size={15} />強制重置
-        </button>
-        <button type="button" className={styles.powerMenuItem}
-          disabled={!isRunning || !!actionLoading} onClick={() => { onClose(); onControl("reboot"); }}>
-          <MIcon name="replay" size={15} />重新啟動
-        </button>
-        <button type="button" className={`${styles.powerMenuItem} ${styles.powerMenuItemDanger}`}
-          onClick={() => onDeleteClick()}>
-          <MIcon name="delete_outline" size={15} />刪除
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ── Creating placeholder card ── */
+/* ── Creating placeholder row ── */
 
 /** 依申請階段決定 placeholder 的狀態顯示（開通中 / 超時 / 失敗…） */
 function getCreatingDisplay(req) {
@@ -192,7 +136,7 @@ function formatMemory(memoryMb) {
   return memoryMb >= 1024 ? `${memoryMb / 1024} GB` : `${memoryMb} MB`;
 }
 
-function CreatingCard({ request, onCancelled }) {
+function CreatingRow({ request, onCancelled }) {
   const toast = useToast();
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [cancelling, setCancelling]       = useState(false);
@@ -221,69 +165,46 @@ function CreatingCard({ request, onCancelled }) {
     formatMemory(request.memory),
   ].filter(Boolean).join(" / ");
 
-  return (
-    <>
-      <div className={`${styles.card} ${styles.cardCreating}`}>
-
-        <div className={styles.cardHeader}>
-          <div className={styles.cardIcon}>
-            <MIcon name={type.icon} size={20} />
-          </div>
-          <div className={styles.cardMeta}>
-            <span className={styles.cardName}>{request.hostname}</span>
-            <div className={styles.cardChips}>
-              <span className={styles.typeChip}>{type.label}</span>
-            </div>
-          </div>
-          <span className={`${styles.badge} ${styles[`badge_${display.color}`]} ${styles.creatingBadge}`}>
-            <span className={display.spin ? styles.spin : styles.badgeIcon}>
-              <MIcon name={display.spin ? "autorenew" : "error_outline"} size={12} />
-            </span>
-            {display.label}
-          </span>
+  return <>
+    <tr className={`${styles.tr} ${styles.pendingRow}`}>
+      <td className={styles.td}>
+        <div className={styles.nameCell}>
+          <div><strong>{request.hostname}</strong><small>{type.label} · {specs || "規格處理中"}</small></div>
         </div>
-
-        <div className={styles.cardInfo}>
-          <InfoRow icon="memory"   label="規格" value={specs || null} />
-          <InfoRow icon="dns"      label="節點" value={request.assigned_node ?? request.desired_node ?? "自動分配"} />
-          <InfoRow icon="schedule" label="排程" value={formatDatetime(request.start_at)} />
-          <InfoRow icon="event"    label="申請" value={formatDatetime(request.created_at)} />
-        </div>
-
-        <div className={styles.cardFooter}>
-          <span className={styles.deletedNote}>建立完成後會自動出現在列表</span>
-          <button
-            type="button"
-            className={styles.cancelBtn}
-            disabled={!canCancel || cancelling}
-            title={canCancel ? "取消申請" : "建立流程已開始，無法取消"}
-            onClick={() => setCancelConfirm(true)}
-          >
-            <MIcon name="cancel" size={14} />
-            取消申請
-          </button>
-        </div>
-
-      </div>
-
-      {cancelConfirm && (
-        <ConfirmModal
-          title="確定取消申請？"
-          desc={`申請「${request.hostname}」取消後無法復原，需重新提出申請。`}
-          confirmLabel="取消申請"
-          danger
-          loading={cancelling}
-          onConfirm={handleCancel}
-          onClose={() => setCancelConfirm(false)}
-        />
-      )}
-    </>
-  );
+      </td>
+      <td className={styles.td}><div className={styles.envPrimary}>資源申請</div><div className={styles.envSub}>建立中</div></td>
+      <td className={styles.td}>
+        <span className={`${styles.badge} ${styles[`badge_${display.color}`]} ${styles.creatingBadge}`}>
+          <span className={display.spin ? styles.spin : styles.badgeIcon}><MIcon name={display.spin ? "autorenew" : "error_outline"} size={12} /></span>{display.label}
+        </span>
+      </td>
+      <td className={styles.td}><span className={styles.muted}>N/A</span></td>
+      <td className={styles.td}>{formatDatetime(request.start_at) ?? formatDatetime(request.created_at)}</td>
+      <td className={styles.td}>{request.assigned_node ?? request.desired_node ?? "尚未分配"}</td>
+      <td className={styles.td}>
+        <button type="button" className={styles.cancelBtn} disabled={!canCancel || cancelling} onClick={() => setCancelConfirm(true)}>
+          <MIcon name="cancel" size={14} />取消申請
+        </button>
+      </td>
+    </tr>
+    {cancelConfirm && createPortal(
+      <ConfirmModal
+        title="確定取消資源申請？"
+        desc={`取消「${request.hostname}」後，如有需要必須重新提出申請。`}
+        confirmLabel="取消申請"
+        danger
+        loading={cancelling}
+        onConfirm={handleCancel}
+        onClose={() => setCancelConfirm(false)}
+      />,
+      document.body,
+    )}
+  </>;
 }
 
 const LIVE_STATUSES = new Set(["running", "stopped", "paused"]);
 
-function resourceCardKey(resource, index) {
+function resourceRowKey(resource, index) {
   const parts = [
     resource.type || "resource",
     resource.node || "unknown-node",
@@ -292,9 +213,12 @@ function resourceCardKey(resource, index) {
   return `${parts.join(":")}:${index}`;
 }
 
-/* ── ResourceCard ── */
-function ResourceCard({ resource, onUpdated, onDeleted }) {
+/* ── Resource row ── */
+function ResourceRow({ resource, onUpdated, onDeleted }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  /* VMID 是系統內部編號，僅管理員／老師看得到 */
+  const showVmid = user?.is_superuser || user?.role === "admin" || user?.role === "teacher";
   const [actionLoading, setActionLoading] = useState(null);
   const [deleteConfirm, setDeleteConfirm]  = useState(false);
   const [deleting, setDeleting]            = useState(false);
@@ -334,180 +258,166 @@ function ResourceCard({ resource, onUpdated, onDeleted }) {
     }
   }
 
-  return (
-    <>
-      <div className={styles.card}>
-
-        {/* ── Header ── */}
-        <div className={styles.cardHeader}>
-          <div className={styles.cardIcon}>
-            <MIcon name={type.icon} size={20} />
-          </div>
-          <div className={styles.cardMeta}>
-            {resource.vmid > 0 ? (
-              <button
-                type="button"
-                className={`${styles.cardName} ${styles.cardNameLink}`}
-                title="查看詳情"
-                onClick={() => navigate(`/my-resources/${resource.vmid}`)}
-              >
-                {resource.name}
-              </button>
-            ) : (
-              <span className={styles.cardName}>{resource.name}</span>
-            )}
-            <div className={styles.cardChips}>
-              <span className={styles.typeChip}>{type.label}</span>
-              {resource.vmid > 0 && <span className={styles.vmidChip}>VMID {resource.vmid}</span>}
-            </div>
-          </div>
-          <StatusBadge status={resource.status} />
-        </div>
-
-        {/* ── Info rows ── */}
-        <div className={styles.cardInfo}>
-          <InfoRow icon="monitor"  label="系統" value={resource.os_info} />
-          <InfoRow icon="category" label="環境" value={resource.environment_type} />
-          <InfoRow icon="wifi"     label="IP"   value={resource.ip_address ?? "N/A"} />
-          <div className={styles.infoRow}>
-            <span className={styles.infoLabel}>
-              <MIcon name="event" size={12} />
-              到期
-            </span>
-            <span className={styles.infoValue}>
-              {resource.expiry_date
-                ? formatDate(resource.expiry_date)
-                : <span className={styles.cardPeriodUnlimited}>∞ 無期限</span>
-              }
-            </span>
+  return <>
+    <tr className={styles.tr} data-guide="resource-card">
+      <td className={styles.td}>
+        <div className={styles.nameCell}>
+          <div>
+            {resource.vmid > 0
+              ? <button type="button" className={styles.nameLink} onClick={() => navigate(`/my-resources/${resource.vmid}`)}>{resource.name}</button>
+              : <strong>{resource.name}</strong>}
+            <small>{type.label}{showVmid && resource.vmid > 0 ? ` · VMID ${resource.vmid}` : ""}</small>
           </div>
         </div>
+      </td>
+      <td className={styles.td}><div className={styles.envPrimary}>{resource.environment_type || "Custom"}</div><div className={styles.envSub}>{resource.os_info || "—"}</div></td>
+      <td className={styles.td}><StatusBadge status={resource.status} /></td>
+      <td className={styles.td}><span className={styles.mono}>{resource.ip_address ?? "N/A"}</span></td>
+      <td className={styles.td}>{resource.expiry_date ? formatDate(resource.expiry_date) : <span className={styles.cardPeriodUnlimited}>∞ 無期限</span>}</td>
+      <td className={styles.td}>{resource.node ?? "—"}</td>
+      <td className={styles.td}>
+        {isLive ? <div className={styles.rowActions}>
+          <button type="button" className={styles.terminalBtn} disabled={resource.status !== "running"} onClick={() => setConsoleOpen(true)} data-guide="resource-console">
+            <MIcon name={isLxc ? "terminal" : "desktop_windows"} size={14} />{isLxc ? "終端機" : "控制台"}
+          </button>
+          {actionLoading && <MIcon name="hourglass_empty" size={16} />}
+          <div className={styles.menuWrap}>
+            {menuOpen && <PowerMenu resource={resource} actionLoading={actionLoading} onControl={handleControl} onDeleteClick={() => { closeMenu(); setDeleteConfirm(true); }} onClose={closeMenu} anchorRef={menuBtnRef} closing={menuClosing} />}
+            <button ref={menuBtnRef} type="button" className={`${styles.menuBtn} ${menuOpen ? styles.menuBtnActive : ""}`} onClick={() => menuOpen ? closeMenu() : setMenuOpen(true)} title="更多操作"><MIcon name="more_vert" size={18} /></button>
+          </div>
+        </div> : <span className={styles.deletedNote}>{STATUS_MAP[resource.status]?.label ?? resource.status}</span>}
+      </td>
+    </tr>
+    {deleteConfirm && createPortal(<ConfirmModal title="確定刪除資源？" desc={`「${resource.name}」${showVmid ? `（VMID ${resource.vmid}）` : ""}刪除後無法復原。`} confirmLabel="刪除" danger loading={deleting} onConfirm={handleDelete} onClose={() => setDeleteConfirm(false)} />, document.body)}
+    {consoleOpen && isLxc && createPortal(<TerminalDialog resource={resource} onClose={() => setConsoleOpen(false)} />, document.body)}
+    {consoleOpen && !isLxc && createPortal(<VncDialog resource={resource} onClose={() => setConsoleOpen(false)} />, document.body)}
+  </>;
+}
 
-        {/* ── Footer ── */}
-        <div className={styles.cardFooter}>
-          {isLive ? (
-            <>
-              <button type="button" className={styles.terminalBtn} title={isLxc ? "終端機" : "控制台"} disabled={resource.status !== "running"} onClick={() => setConsoleOpen(true)}>
-                <MIcon name={isLxc ? "terminal" : "desktop_windows"} size={14} />
-                {isLxc ? "終端機" : "控制台"}
-              </button>
-              <div className={styles.cardActions}>
-                {actionLoading && <MIcon name="hourglass_empty" size={16} />}
-                <div className={styles.menuWrap}>
-                  {menuOpen && (
-                    <PowerMenu
-                      resource={resource}
-                      actionLoading={actionLoading}
-                      onControl={handleControl}
-                      onDeleteClick={() => { closeMenu(); setDeleteConfirm(true); }}
-                      onClose={closeMenu}
-                      anchorRef={menuBtnRef}
-                      closing={menuClosing}
-                    />
-                  )}
-                  <button
-                    ref={menuBtnRef}
-                    type="button"
-                    className={`${styles.menuBtn} ${menuOpen ? styles.menuBtnActive : ""}`}
-                    onClick={() => menuOpen ? closeMenu() : setMenuOpen(true)}
-                    title="電源控制"
-                  >
-                    <MIcon name="more_vert" size={18} />
-                  </button>
-                </div>
-              </div>
-            </>
-          ) : (
-            <span className={styles.deletedNote}>
-              {STATUS_MAP[resource.status]?.label ?? resource.status}
-            </span>
-          )}
-        </div>
-
-      </div>
-
-      {deleteConfirm && (
-        <ConfirmModal
-          title="確定刪除資源？"
-          desc={`「${resource.name}」(VMID ${resource.vmid}) 刪除後無法復原，所有資料將會消失。`}
-          confirmLabel="刪除"
-          danger
-          loading={deleting}
-          onConfirm={handleDelete}
-          onClose={() => setDeleteConfirm(false)}
-        />
-      )}
-
-      {consoleOpen && isLxc && (
-        <TerminalDialog resource={resource} onClose={() => setConsoleOpen(false)} />
-      )}
-      {consoleOpen && !isLxc && (
-        <VncDialog resource={resource} onClose={() => setConsoleOpen(false)} />
-      )}
-    </>
+function EnvironmentMachineRow({ machine, groupStatus, onUpdated }) {
+  const toast = useToast();
+  const type = TYPE_MAP[machine.type] ?? { label: machine.type, icon: "computer" };
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const resource = machine.resource;
+  const isLxc = machine.type === "lxc";
+  const environmentReady = ["running", "active"].includes(groupStatus);
+  const canControl = Boolean(
+    environmentReady && resource?.vmid && resource.can_control !== false,
   );
+  const canOpen = canControl && resource.status === "running";
+  const controlAction = resource?.status === "running" ? "shutdown" : "start";
+
+  async function handleControl() {
+    if (!canControl || actionLoading) return;
+    setActionLoading(true);
+    try {
+      await ResourcesService[controlAction](resource.vmid);
+      const status = controlAction === "start" ? "running" : "stopped";
+      onUpdated({ ...resource, status });
+      toast.success(controlAction === "start" ? "已送出啟動指令" : "已送出正常關機指令");
+    } catch (error) {
+      toast.error(error?.message ?? "機器操作失敗");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  return <>
+    <tr className={`${styles.tr} ${styles.environmentMachineRow}`}>
+    <td className={styles.td}><div className={`${styles.nameCell} ${styles.environmentMachineName}`}><span className={styles.machineBranch}>└</span><div><strong>{machine.name}</strong><small>{machine.role} · {type.label}</small></div></div></td>
+    <td className={styles.td}><div className={styles.envPrimary}>{machine.os}</div><div className={styles.envSub}>{machine.resource ? "已連接實際資源" : "建立中"}</div></td>
+    <td className={styles.td}><StatusBadge status={machine.status} /></td>
+    <td className={styles.td}><span className={styles.mono}>{machine.ip}</span></td>
+    <td className={styles.td}><span className={styles.muted}>依環境管理</span></td>
+    <td className={styles.td}>{machine.node}</td>
+    <td className={styles.td}><div className={styles.rowActions}><button type="button" className={styles.terminalBtn} disabled={!canOpen} title={canOpen ? (isLxc ? "終端機" : "控制台") : "機器尚未完成或未開機"} onClick={() => setConsoleOpen(true)}><MIcon name={isLxc ? "terminal" : "desktop_windows"} size={14} />{isLxc ? "終端機" : "控制台"}</button><button type="button" className={styles.terminalBtn} disabled={!canControl || actionLoading || !["running", "stopped"].includes(resource?.status)} onClick={handleControl}><MIcon name={actionLoading ? "hourglass_empty" : controlAction === "start" ? "play_arrow" : "power_settings_new"} size={14} />{controlAction === "start" ? "啟動" : "關機"}</button></div></td>
+    </tr>
+    {consoleOpen && isLxc && createPortal(<TerminalDialog resource={resource} onClose={() => setConsoleOpen(false)} />, document.body)}
+    {consoleOpen && !isLxc && createPortal(<VncDialog resource={resource} onClose={() => setConsoleOpen(false)} />, document.body)}
+  </>;
+}
+
+function EnvironmentGroupRows({ group, onUpdated, onEnded }) {
+  const [expanded, setExpanded] = useState(true);
+  const [ending, setEnding] = useState(false);
+  const [endConfirm, setEndConfirm] = useState(false);
+  const toast = useToast();
+  const canEnd = group.kind === "quick_practice" && !["reclaiming", "reclaimed"].includes(group.status);
+
+  async function endPractice() {
+    setEnding(true);
+    try {
+      await QuickPracticeService.endSession(group.id);
+      toast.success("已開始回收這組練習環境");
+      setEndConfirm(false);
+      onEnded?.();
+    } catch (error) {
+      toast.error(error?.message ?? "結束練習失敗");
+    } finally {
+      setEnding(false);
+    }
+  }
+
+  return <>
+    <tr
+      className={`${styles.tr} ${styles.environmentGroupRow}`}
+      onClick={(event) => {
+        /* 整列都可以開合，但列內的按鈕（結束練習、名稱區的 toggle）各自處理自己的點擊 */
+        if (event.target.closest("button")) return;
+        setExpanded((value) => !value);
+      }}
+    >
+      <td className={styles.td}><button type="button" className={styles.environmentToggle} aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}><MIcon name={expanded ? "expand_more" : "chevron_right"} size={20} /><span><strong>{group.kindLabel}｜{group.title}</strong><small>{group.machines.length} 台機器 · 整組管理</small></span></button></td>
+      <td className={styles.td}><div className={styles.envPrimary}>{group.kind === "course" ? "課程多機環境" : "快速練習環境"}</div><div className={styles.envSub}>整組檢視</div></td>
+      <td className={styles.td}><StatusBadge status={group.status} /></td>
+      <td className={styles.td}><span className={styles.muted}>展開查看</span></td>
+      <td className={styles.td}><strong className={styles.environmentTiming}>{group.timingLabel}</strong></td>
+      <td className={styles.td}>{group.nodeLabel}</td>
+      <td className={styles.td}><div className={styles.groupActions}>
+        {canEnd
+          ? <button type="button" className={styles.terminalBtn} disabled={ending} onClick={() => setEndConfirm(true)}><MIcon name="stop_circle" size={14} />{ending ? "結束中…" : "結束練習"}</button>
+          : <span className={styles.muted}>展開查看</span>}
+      </div></td>
+    </tr>
+    {expanded && group.machines.map((machine) => <EnvironmentMachineRow key={machine.id} machine={machine} groupStatus={group.status} onUpdated={onUpdated} />)}
+    {endConfirm && createPortal(<ConfirmModal title="結束這組練習？" desc="整組機器會立刻回收，未儲存的內容會消失；已使用的建立次數不會退還。" confirmLabel="結束練習" danger loading={ending} onConfirm={endPractice} onClose={() => setEndConfirm(false)} />, document.body)}
+  </>;
 }
 
 /* ── Skeleton ── */
-function SkeletonCard() {
-  return (
-    <div className={styles.card} aria-hidden>
-      <div className={styles.cardHeader}>
-        <div className={`${styles.cardIcon} ${styles.skeleton}`} />
-        <div className={styles.cardMeta}>
-          <div className={`${styles.skeleton} ${styles.skRow}`} style={{ width: "55%", height: 14 }} />
-          <div className={`${styles.skeleton} ${styles.skRow}`} style={{ width: "32%", height: 11 }} />
-        </div>
-        <div className={`${styles.skeleton} ${styles.skBadge}`} />
-      </div>
-      <div className={styles.cardInfo}>
-        {[0, 1, 2].map((i) => (
-          <div key={i} className={styles.skInfoRow}>
-            <div className={`${styles.skeleton} ${styles.skRow}`} style={{ width: "22%", height: 11 }} />
-            <div className={`${styles.skeleton} ${styles.skRow}`} style={{ width: "55%", height: 11 }} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function SkeletonRow() {
+  return <tr className={styles.tr} aria-hidden>{[0, 1, 2, 3, 4, 5, 6].map((column) => <td key={column} className={styles.td}><div className={`${styles.skeleton} ${styles.skRow}`} style={{ width: column === 0 ? "75%" : "60%", height: 14 }} /></td>)}</tr>;
 }
 
 /* ── Empty / Error states ── */
 function EmptyState() {
-  return (
-    <div className={styles.empty}>
-      <div className={styles.emptyIcon}>
-        <MIcon name="dns" size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>尚無資源</h2>
-      <p className={styles.emptyDesc}>申請通過的虛擬機／容器將會顯示在這裡</p>
-    </div>
-  );
+  return <SharedEmptyState icon="dns" title="尚無資源" />;
 }
 
 function ErrorState({ onRetry }) {
   return (
-    <div className={styles.empty}>
-      <div className={`${styles.emptyIcon} ${styles.emptyIconError}`}>
-        <MIcon name="error_outline" size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>載入失敗</h2>
-      <p className={styles.emptyDesc}>無法取得資源清單，請稍後再試</p>
-      <button type="button" className={styles.btnSecondary} onClick={onRetry}>
-        <MIcon name="refresh" size={16} />
-        重試
-      </button>
-    </div>
+    <EmptyState
+      icon="error_outline"
+      title="載入失敗"
+      action={
+        <button type="button" className={styles.btnSecondary} onClick={onRetry}>
+          <MIcon name="refresh" size={16} />
+          重試
+        </button>
+      }
+    />
   );
 }
 
 /* ── Page ── */
 export default function ResourcesPage() {
+  const navigate = useNavigate();
   const [resources, setResources] = useState([]);
+  const [quickSessions, setQuickSessions] = useState([]);
   const [pending, setPending]     = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(false);
-  const [pairWatch, setPairWatch] = useState(null); // { sessionId, vmid }
   const pendingSigRef = useRef(null);
 
   /** silent = true 時不觸發 skeleton / error state，供背景同步使用 */
@@ -517,8 +427,12 @@ export default function ResourcesPage() {
       setError(false);
     }
     try {
-      const data = await ResourcesService.list({ signal });
+      const [data, sessions] = await Promise.all([
+        ResourcesService.list({ signal }),
+        QuickPracticeService.listMySessions({ signal }).catch(() => []),
+      ]);
       setResources(data ?? []);
+      setQuickSessions(sessions ?? []);
     } catch (err) {
       if (!silent && !err?.cancelled) setError(true);
     } finally {
@@ -563,61 +477,69 @@ export default function ResourcesPage() {
     setResources((prev) => prev.filter((r) => r.vmid !== vmid));
   }
 
+  // 建立中申請會同時出現在 pending 與資源 API；先移除 placeholder，避免重複列。
+  const pendingRequestIds = new Set(pending.map((request) => String(request.id)));
+  const resourcesForDisplay = resources.filter((resource) => !(
+    resource.is_placeholder
+    && resource.request_id != null
+    && pendingRequestIds.has(String(resource.request_id))
+  ));
+  const environmentGroups = buildEnvironmentGroups(resourcesForDisplay, quickSessions);
+  const grouped = groupedResourceKeys(environmentGroups);
+  const visibleResources = resourcesForDisplay.filter((resource) => (
+    !grouped.vmids.has(resource.vmid)
+    && !grouped.requestIds.has(String(resource.request_id))
+  ));
+  const visiblePending = pending.filter((request) => !grouped.requestIds.has(String(request.id)));
+
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>我的資源</h1>
-          <p className={styles.pageSubtitle}>查看與管理申請通過的虛擬機和容器</p>
-        </div>
-      </div>
+      <PageHeader title="我的資源" subtitle="查看與管理申請通過的虛擬機和容器">
+        <button
+          type="button"
+          className={styles.btnPrimary}
+          onClick={() => navigate("/my-requests", { state: { create: true } })}
+        >
+          <MIcon name="add" size={16} />
+          申請資源
+        </button>
+      </PageHeader>
 
       {/* 我的配額用量（模組 E） */}
       <QuotaUsageBar />
 
-      {/* 協作邀請（模組 E，有邀請才顯示） */}
-      <PairInvitesCard
-        onJoin={(sessionId, vmid) => setPairWatch({ sessionId, vmid })}
-      />
-
       <div className={styles.content}>
-        {loading ? (
-          <div className={styles.grid}>
-            {[0, 1, 2].map((i) => <SkeletonCard key={i} />)}
-          </div>
-        ) : error ? (
+        {error ? (
           <ErrorState onRetry={() => fetchResources()} />
-        ) : resources.length === 0 && pending.length === 0 ? (
+        ) : !loading && visibleResources.length === 0 && visiblePending.length === 0 && environmentGroups.length === 0 ? (
           <EmptyState />
         ) : (
-          <div className={styles.grid}>
-            {pending.map((req) => (
-              <CreatingCard
-                key={`creating:${req.id}`}
-                request={req}
-                onCancelled={refreshPending}
-              />
-            ))}
-            {resources.map((r, index) => (
-              <ResourceCard
-                key={resourceCardKey(r, index)}
-                resource={r}
-                onUpdated={handleUpdated}
-                onDeleted={handleDeleted}
-              />
-            ))}
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <colgroup>
+                <col />
+                <col className={styles.colEnv} />
+                <col className={styles.colStatus} />
+                <col className={styles.colIp} />
+                <col className={styles.colExpiry} />
+                <col className={styles.colNode} />
+                <col className={styles.colActions} />
+              </colgroup>
+              <thead>
+                <tr><th className={styles.th}>名稱</th><th className={styles.th}>環境／系統</th><th className={styles.th}>狀態</th><th className={styles.th}>IP 位址</th><th className={styles.th}>到期日</th><th className={styles.th}>節點</th><th className={styles.th}>動作</th></tr>
+              </thead>
+              <tbody>
+                {loading ? [0, 1, 2].map((i) => <SkeletonRow key={i} />) : <>
+                  {environmentGroups.map((group) => <EnvironmentGroupRows key={group.id} group={group} onUpdated={handleUpdated} onEnded={() => fetchResources(true)} />)}
+                  {visiblePending.map((req) => <CreatingRow key={`creating:${req.id}`} request={req} onCancelled={refreshPending} />)}
+                  {visibleResources.map((r, index) => <ResourceRow key={resourceRowKey(r, index)} resource={r} onUpdated={handleUpdated} onDeleted={handleDeleted} />)}
+                </>}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
 
-      {pairWatch && (
-        <ClassroomWatchDialog
-          sessionId={pairWatch.sessionId}
-          title={`協作 VM ${pairWatch.vmid}`}
-          pair
-          onClose={() => setPairWatch(null)}
-        />
-      )}
     </div>
   );
 }

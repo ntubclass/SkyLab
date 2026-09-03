@@ -3,11 +3,17 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import styles from "./ResourceMgmtPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import PowerMenu from "../../../components/PowerMenu/PowerMenu";
+import SharedEmptyState from "../../../components/EmptyState/EmptyState";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
+import LoadingState from "../../../components/LoadingState/LoadingState";
 import { ResourcesService } from "../../../services/resources";
 import TerminalDialog from "../../personal/resources/TerminalDialog";
 import VncDialog from "../../personal/resources/VncDialog";
+import PageHeader from "../../../components/PageHeader/PageHeader";
+import { QuickPracticeService } from "../../../services/quickPractice";
+import { buildEnvironmentGroups, groupedResourceKeys } from "../../../utils/environmentGroups";
 
 /* ── Constants ── */
 const STATUS_MAP = {
@@ -78,6 +84,110 @@ function StatusBadge({ status }) {
   );
 }
 
+function EnvironmentMachineRow({ machine, onUpdated }) {
+  const toast = useToast();
+  const type = TYPE_MAP[machine.type] ?? { label: machine.type, icon: "computer" };
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const resource = machine.resource;
+  const isLxc = machine.type === "lxc";
+  const canControl = Boolean(resource?.vmid && resource.can_control !== false);
+  const canOpen = canControl && resource.status === "running";
+  const controlAction = resource?.status === "running" ? "shutdown" : "start";
+
+  async function handleControl() {
+    if (!canControl || actionLoading) return;
+    setActionLoading(true);
+    try {
+      await ResourcesService[controlAction](resource.vmid);
+      const status = controlAction === "start" ? "running" : "stopped";
+      onUpdated({ ...resource, status });
+      toast.success(controlAction === "start" ? "已送出啟動指令" : "已送出正常關機指令");
+    } catch (error) {
+      toast.error(error?.message ?? "機器操作失敗");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  return <>
+    <tr className={`${styles.tr} ${styles.environmentMachineRow}`}>
+      <td className={`${styles.td} ${styles.checkCell}`} />
+      <td className={styles.td}>
+        <div className={`${styles.nameCell} ${styles.environmentMachineName}`}>
+          <span className={styles.machineBranch} aria-hidden="true">└</span>
+          <div>
+            <div className={styles.namePrimary}>{machine.name}</div>
+            <div className={styles.nameSub}>{machine.role} · {type.label}</div>
+          </div>
+        </div>
+      </td>
+      <td className={styles.td}>
+        <div className={styles.envPrimary}>{machine.os}</div>
+        <div className={styles.envSub}>{machine.resource ? "已連接實際資源" : "建立中"}</div>
+      </td>
+      <td className={styles.td}><StatusBadge status={machine.status} /></td>
+      <td className={styles.td}><span className={styles.mono}>{machine.ip}</span></td>
+      <td className={styles.td}><span className={styles.noAction}>依環境統一管理</span></td>
+      <td className={styles.td}>{machine.node}</td>
+      <td className={styles.td}><div className={styles.actions}>
+        <button type="button" className={styles.consoleBtn} disabled={!canOpen} title={canOpen ? (isLxc ? "終端機" : "控制台") : "機器尚未完成或未開機"} onClick={() => setConsoleOpen(true)}>
+          <MIcon name={isLxc ? "terminal" : "desktop_windows"} size={14} />
+          {isLxc ? "終端機" : "控制台"}
+        </button>
+        <button type="button" className={styles.consoleBtn} disabled={!canControl || actionLoading || !["running", "stopped"].includes(resource?.status)} onClick={handleControl}><MIcon name={actionLoading ? "hourglass_empty" : controlAction === "start" ? "play_arrow" : "power_settings_new"} size={14} />{controlAction === "start" ? "啟動" : "關機"}</button>
+      </div></td>
+    </tr>
+    {consoleOpen && isLxc && createPortal(<TerminalDialog resource={resource} onClose={() => setConsoleOpen(false)} />, document.body)}
+    {consoleOpen && !isLxc && createPortal(<VncDialog resource={resource} onClose={() => setConsoleOpen(false)} />, document.body)}
+  </>;
+}
+
+function EnvironmentGroupRows({ group, onUpdated }) {
+  const [expanded, setExpanded] = useState(true);
+  const running = group.machines.filter((machine) => machine.status === "running").length;
+  const allRunning = running === group.machines.length;
+  return (
+    <>
+      <tr
+        className={`${styles.tr} ${styles.environmentGroupRow}`}
+        onClick={(event) => {
+          /* 整列都可以開合，但列內的按鈕與勾選框各自處理自己的點擊 */
+          if (event.target.closest("button, input, label")) return;
+          setExpanded((value) => !value);
+        }}
+      >
+        <td className={`${styles.td} ${styles.checkCell}`} />
+        <td className={styles.td}>
+          <button
+            type="button"
+            className={styles.environmentToggle}
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <MIcon name={expanded ? "expand_more" : "chevron_right"} size={20} />
+            <span><strong>{group.kindLabel}｜{group.title}</strong><small>{group.machines.length} 台機器 · 整組管理</small></span>
+          </button>
+        </td>
+        <td className={styles.td}>
+          <div className={styles.envPrimary}>{group.kind === "course" ? "課程多機環境" : "快速練習環境"}</div>
+          <div className={styles.envSub}>整組檢視</div>
+        </td>
+        <td className={styles.td}>
+          <span className={`${styles.badge} ${styles[`badge_${allRunning ? "success" : "info"}`]}`}>{running}/{group.machines.length} 執行中</span>
+        </td>
+        <td className={styles.td}><span className={styles.noAction}>展開查看</span></td>
+        <td className={styles.td}><strong className={styles.environmentTiming}>{group.timingLabel}</strong></td>
+        <td className={styles.td}>{group.nodeLabel}</td>
+        <td className={styles.td}><span className={styles.noAction}>展開後逐台操作</span></td>
+      </tr>
+      {expanded && group.machines.map((machine) => (
+        <EnvironmentMachineRow key={machine.id} machine={machine} onUpdated={onUpdated} />
+      ))}
+    </>
+  );
+}
+
 /* ── Confirm Modal ── */
 function ConfirmModal({ title, desc, confirmLabel = "確定", danger = false, loading = false, onConfirm, onClose }) {
   const [closing, setClosing] = useState(false);
@@ -118,59 +228,6 @@ function ConfirmModal({ title, desc, confirmLabel = "確定", danger = false, lo
   );
 }
 
-/* ── Power dropdown ── */
-function PowerMenu({ resource, actionLoading, onControl, onDeleteClick, onClose, anchorRef, closing }) {
-  const ref = useRef(null);
-
-  useEffect(() => {
-    function handler(e) {
-      if (!ref.current?.contains(e.target) && !anchorRef?.current?.contains(e.target)) onClose();
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [onClose, anchorRef]);
-
-  const isRunning = resource.status === "running";
-  const isStopped = resource.status === "stopped" || resource.status === "paused";
-
-  return (
-    <div
-      ref={ref}
-      className={`${styles.powerMenu} ${closing ? styles.powerMenuOut : ""}`}
-    >
-      <div className={styles.powerMenuTitle}>電源控制</div>
-      <div className={styles.powerMenuGrid}>
-        <button type="button" className={styles.powerMenuItem}
-          disabled={!isStopped || !!actionLoading} onClick={() => { onClose(); onControl("start"); }}>
-          <span style={{ color: "var(--color-success)", lineHeight: 1 }}><MIcon name="play_arrow" size={15} /></span>
-          啟動
-        </button>
-        <button type="button" className={`${styles.powerMenuItem} ${styles.powerMenuItemWarn}`}
-          disabled={!isRunning || !!actionLoading} onClick={() => { onClose(); onControl("stop"); }}>
-          <MIcon name="stop" size={15} />強制停止
-        </button>
-        <button type="button" className={styles.powerMenuItem}
-          disabled={!isRunning || !!actionLoading} onClick={() => { onClose(); onControl("shutdown"); }}>
-          <MIcon name="power_settings_new" size={15} />關機
-        </button>
-        <button type="button" className={`${styles.powerMenuItem} ${styles.powerMenuItemWarn}`}
-          disabled={!isRunning || !!actionLoading} onClick={() => { onClose(); onControl("reset"); }}>
-          <MIcon name="restart_alt" size={15} />強制重置
-        </button>
-        <button type="button" className={styles.powerMenuItem}
-          disabled={!isRunning || !!actionLoading} onClick={() => { onClose(); onControl("reboot"); }}>
-          <MIcon name="replay" size={15} />重新啟動
-        </button>
-        <button type="button" className={`${styles.powerMenuItem} ${styles.powerMenuItemDanger}`}
-          onClick={() => onDeleteClick()}>
-          <MIcon name="delete_outline" size={15} />刪除
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ── Table row ── */
 /* ── 批次操作列（有勾選才顯示） ── */
 function BatchActionBar({ selectedVmids, onDone, onClear }) {
   const toast = useToast();
@@ -315,9 +372,6 @@ function ResourceRow({ resource, onUpdated, onDeleted, selected = false, onToggl
         {/* 名稱 */}
         <td className={styles.td}>
           <div className={styles.nameCell}>
-            <div className={styles.nameIcon}>
-              <MIcon name={type.icon} size={18} />
-            </div>
             <div>
               {resource.vmid > 0 ? (
                 <button
@@ -439,55 +493,23 @@ function ResourceRow({ resource, onUpdated, onDeleted, selected = false, onToggl
   );
 }
 
-/* ── Skeleton ── */
-function SkeletonRow() {
-  return (
-    <tr className={styles.tr} aria-hidden>
-      <td className={`${styles.td} ${styles.checkCell}`} />
-      <td className={styles.td}>
-        <div className={styles.nameCell}>
-          <div className={`${styles.nameIcon} ${styles.skeleton}`} />
-          <div className={styles.skMeta}>
-            <div className={`${styles.skeleton} ${styles.skRow}`} style={{ width: 120, height: 13 }} />
-            <div className={`${styles.skeleton} ${styles.skRow}`} style={{ width: 80, height: 11 }} />
-          </div>
-        </div>
-      </td>
-      {[0, 1, 2, 3, 4, 5].map((i) => (
-        <td key={i} className={styles.td}>
-          <div className={`${styles.skeleton} ${styles.skRow}`} style={{ width: i === 1 ? 56 : 72, height: 12 }} />
-        </td>
-      ))}
-    </tr>
-  );
-}
-
 /* ── Empty / Error states ── */
 function EmptyState() {
-  return (
-    <div className={styles.empty}>
-      <div className={styles.emptyIcon}>
-        <MIcon name="dns" size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>尚無虛擬機或容器</h2>
-      <p className={styles.emptyDesc}>系統中還沒有任何虛擬機或 LXC 容器</p>
-    </div>
-  );
+  return <SharedEmptyState icon="dns" title="尚無虛擬機或容器" />;
 }
 
 function ErrorState({ onRetry }) {
   return (
-    <div className={styles.empty}>
-      <div className={`${styles.emptyIcon} ${styles.emptyIconError}`}>
-        <MIcon name="error_outline" size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>載入失敗</h2>
-      <p className={styles.emptyDesc}>無法取得資源清單，請稍後再試</p>
-      <button type="button" className={styles.btnSecondary} onClick={onRetry}>
-        <MIcon name="refresh" size={16} />
-        重試
-      </button>
-    </div>
+    <EmptyState
+      icon="error_outline"
+      title="載入失敗"
+      action={
+        <button type="button" className={styles.btnSecondary} onClick={onRetry}>
+          <MIcon name="refresh" size={16} />
+          重試
+        </button>
+      }
+    />
   );
 }
 
@@ -495,11 +517,18 @@ function ErrorState({ onRetry }) {
 export default function ResourceMgmtPage() {
   const navigate = useNavigate();
   const [resources, setResources] = useState([]);
+  const [quickSessions, setQuickSessions] = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(false);
   const [selectedVmids, setSelectedVmids] = useState(() => new Set());
 
-  const selectableVmids = resources
+  const environmentGroups = buildEnvironmentGroups(resources, quickSessions);
+  const grouped = groupedResourceKeys(environmentGroups);
+  const visibleResources = resources.filter((resource) => (
+    !grouped.vmids.has(resource.vmid)
+    && !grouped.requestIds.has(String(resource.request_id))
+  ));
+  const selectableVmids = visibleResources
     .filter((r) => r.can_control !== false && r.vmid != null && r.vmid > 0)
     .map((r) => r.vmid);
   const allSelected = selectableVmids.length > 0 && selectableVmids.every((v) => selectedVmids.has(v));
@@ -524,8 +553,12 @@ export default function ResourceMgmtPage() {
       setError(false);
     }
     try {
-      const data = await ResourcesService.listAll({ signal });
+      const [data, sessions] = await Promise.all([
+        ResourcesService.listAll({ signal }),
+        QuickPracticeService.listAllSessions({ signal }).catch(() => []),
+      ]);
       setResources(data ?? []);
+      setQuickSessions(sessions ?? []);
     } catch (err) {
       if (!silent && !err?.cancelled) setError(true);
     } finally {
@@ -557,18 +590,14 @@ export default function ResourceMgmtPage() {
   return (
     <div className={styles.page}>
       {/* ── 頁首 ── */}
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>虛擬機與容器</h1>
-          <p className={styles.pageSubtitle}>查看與管理系統中所有虛擬機與 LXC 容器</p>
-        </div>
+      <PageHeader title="資源管理" subtitle="查看與管理系統中所有虛擬機與 LXC 容器">
         <div className={styles.pageActions}>
           <button type="button" className={styles.btnPrimary} onClick={() => navigate("/my-requests")}>
             <MIcon name="add" size={16} />
             建立資源
           </button>
         </div>
-      </div>
+      </PageHeader>
 
       {/* ── 批次操作 ── */}
       <BatchActionBar
@@ -582,13 +611,29 @@ export default function ResourceMgmtPage() {
 
       {/* ── 內容 ── */}
       <div className={styles.content}>
+        <div className={styles.previewNotice} role="note">
+          <MIcon name="account_tree" size={17} />
+          <span><strong>多機環境</strong>課堂機器與快速練習會整組顯示，展開後可操作實際機器。</span>
+        </div>
         {error ? (
           <ErrorState onRetry={fetchResources} />
-        ) : !loading && resources.length === 0 ? (
+        ) : loading ? (
+          <LoadingState fullPage />
+        ) : visibleResources.length === 0 && environmentGroups.length === 0 ? (
           <EmptyState />
         ) : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
+              <colgroup>
+                <col className={styles.colCheck} />
+                <col />
+                <col className={styles.colEnv} />
+                <col className={styles.colStatus} />
+                <col className={styles.colIp} />
+                <col className={styles.colExpiry} />
+                <col className={styles.colNode} />
+                <col className={styles.colActions} />
+              </colgroup>
               <thead>
                 <tr>
                   <th className={`${styles.th} ${styles.checkCell}`}>
@@ -607,18 +652,17 @@ export default function ResourceMgmtPage() {
                 </tr>
               </thead>
               <tbody>
-                {loading
-                  ? [0, 1, 2, 3].map((i) => <SkeletonRow key={i} />)
-                  : resources.map((r, index) => (
-                      <ResourceRow
-                        key={resourceRowKey(r, index)}
-                        resource={r}
-                        onUpdated={handleUpdated}
-                        onDeleted={handleDeleted}
-                        selected={selectedVmids.has(r.vmid)}
-                        onToggleSelect={toggleSelect}
-                      />
-                    ))}
+                {environmentGroups.map((group) => <EnvironmentGroupRows key={group.id} group={group} onUpdated={handleUpdated} />)}
+                {visibleResources.map((r, index) => (
+                  <ResourceRow
+                    key={resourceRowKey(r, index)}
+                    resource={r}
+                    onUpdated={handleUpdated}
+                    onDeleted={handleDeleted}
+                    selected={selectedVmids.has(r.vmid)}
+                    onToggleSelect={toggleSelect}
+                  />
+                ))}
               </tbody>
             </table>
           </div>

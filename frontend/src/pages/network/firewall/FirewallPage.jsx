@@ -30,8 +30,10 @@ import ConnectionEdge   from "./edges/ConnectionEdge";
 import { buildFlow, portLabel } from "./utils/buildFlow";
 import { useTheme } from "../../../contexts/ThemeContext";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
+import useDialogPresence from "../../../hooks/useDialogPresence";
 import styles from "./FirewallPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 /* ─── 常數 ──────────────────────────────────────────────── */
 const GATEWAY_KEY   = "gateway";
@@ -40,7 +42,6 @@ const VM_COL_X      = 160;
 const ROW_H         = 160;
 const GATEWAY_X     = VM_COL_X + 520;
 
-/* ─── 類型映射（必須在元件外定義） ─────────────────────── */
 const NODE_TYPES = { gateway: GatewayNode, vm: VMNode };
 const EDGE_TYPES = { connection: ConnectionEdge };
 
@@ -57,6 +58,8 @@ export default function FirewallPage() {
   const [deleteEdge,   setDeleteEdge]   = useState(null);
   const [showLabels,   setShowLabels]   = useState(false);
   const [showMiniMap,  setShowMiniMap]  = useState(true);
+  const connDialog    = useDialogPresence(showDialog);
+  const deleteConfirm = useDialogPresence(deleteEdge);
   const rfInstance = useRef(null);
   const saveTimer  = useRef(null);
 
@@ -78,16 +81,27 @@ export default function FirewallPage() {
     }
     try {
       const data = await getTopology({ signal });
-      setTopology(data);
-      const { nodes: n, edges: e } = buildFlow(data, handleDeleteEdge, showLabels);
-      setNodes(n);
-      setEdges(e);
+      setTopology(data ?? { nodes: [], edges: [] });
     } catch (err) {
       if (!silent) setError(err?.message ?? "載入拓撲失敗");
     } finally {
       if (!silent && !signal?.aborted) setLoading(false);
     }
-  }, [handleDeleteEdge, showLabels, setNodes, setEdges]);
+  }, []);
+
+  useEffect(() => {
+    if (!topology) return;
+    const { nodes: nextNodes, edges: nextEdges } = buildFlow(
+      topology,
+      handleDeleteEdge,
+      showLabels
+    );
+    setSelectedNode(null);
+    setDeleteEdge(null);
+    setNodes(nextNodes);
+    setEdges(nextEdges);
+    window.requestAnimationFrame(() => rfInstance.current?.fitView({ padding: 0.2, duration: 250 }));
+  }, [handleDeleteEdge, setEdges, setNodes, showLabels, topology]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -185,22 +199,19 @@ export default function FirewallPage() {
   return (
     <div className={styles.page}>
       {/* ── Header ── */}
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>防火牆</h1>
-          <p className={styles.pageSubtitle}>管理 VM 之間與對外的網路連線規則</p>
-        </div>
+      <PageHeader title="防火牆" subtitle="管理 VM 之間與對外的網路連線規則">
         <div className={styles.headerActions}>
           <button
             type="button"
             className={styles.btnPrimary}
             onClick={() => setShowDialog(true)}
+            data-guide="firewall-create"
           >
             <MIcon name="add" size={16} />
             新增連線
           </button>
         </div>
-      </div>
+      </PageHeader>
 
       {/* ── Content ── */}
       <div className={styles.content}>
@@ -226,7 +237,7 @@ export default function FirewallPage() {
         )}
 
         {!loading && !error && topology && (
-          <div className={styles.flowWrap}>
+          <div className={styles.flowWrap} data-guide="firewall-map">
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -248,8 +259,18 @@ export default function FirewallPage() {
               <Controls />
               {showMiniMap && <MiniMap zoomable pannable />}
 
+              {nodes.length === 0 && (
+                <Panel position="top-center">
+                  <div className={styles.emptyTopology}>
+                    <MIcon name="security" size={23} />
+                    <strong>目前沒有可顯示的防火牆資源</strong>
+                    <span>建立 VM 後，機器與連線規則會出現在這張圖上。</span>
+                  </div>
+                </Panel>
+              )}
+
               <Panel position="top-left">
-                <div className={styles.toolbar}>
+                <div className={styles.toolbar} data-guide="firewall-tools">
                   <button
                     type="button"
                     className={styles.toolbarBtn}
@@ -295,23 +316,27 @@ export default function FirewallPage() {
       </div>
 
       {/* ── 新增連線 Dialog ── */}
-      {showDialog && (
+      {connDialog.open && (
         <ConnectionDialog
           nodes={vmNodes}
           onConfirm={handleCreateConnection}
           onClose={() => setShowDialog(false)}
+          closing={connDialog.closing}
         />
       )}
 
       {/* ── 刪除確認 ── */}
-      {deleteEdge && (
-        <div className={styles.confirmOverlay} onClick={() => setDeleteEdge(null)}>
+      {deleteConfirm.open && (
+        <div
+          className={`${styles.confirmOverlay} ${deleteConfirm.closing ? styles.confirmOverlayOut : ""}`}
+          onClick={() => setDeleteEdge(null)}
+        >
           <div className={styles.confirmDialog} onClick={(e) => e.stopPropagation()}>
             <h3 className={styles.confirmTitle}>刪除連線</h3>
             <p className={styles.confirmMsg}>
               確定要刪除此連線嗎？
-              {deleteEdge.ports?.length > 0 && (
-                <><br /><small>{portLabel(deleteEdge.ports)}</small></>
+              {deleteConfirm.item.ports?.length > 0 && (
+                <><br /><small>{portLabel(deleteConfirm.item.ports)}</small></>
               )}
             </p>
             <div className={styles.confirmActions}>

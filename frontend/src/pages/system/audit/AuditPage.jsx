@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./AuditPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import LoadingState from "../../../components/LoadingState/LoadingState";
+import SharedEmptyState from "../../../components/EmptyState/EmptyState";
 import { useToast } from "../../../hooks/useToast";
 import { downloadBlob } from "../../../services/api";
 import { AuditLogsService } from "../../../services/auditLogs";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 const PAGE_SIZE = 50;
 
@@ -27,15 +30,10 @@ function toIso(dateStr, endOfDay = false) {
 
 function EmptyState({ hasFilter }) {
   return (
-    <div className={styles.empty}>
-      <div className={styles.emptyIcon}>
-        <MIcon name={hasFilter ? "search_off" : "receipt_long"} size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>{hasFilter ? "找不到符合的紀錄" : "尚無操作紀錄"}</h2>
-      <p className={styles.emptyDesc}>
-        {hasFilter ? "請調整篩選條件後重試。" : "系統操作紀錄將會顯示在這裡"}
-      </p>
-    </div>
+    <SharedEmptyState
+      icon={hasFilter ? "search_off" : "receipt_long"}
+      title={hasFilter ? "找不到符合的紀錄" : "尚無操作紀錄"}
+    />
   );
 }
 
@@ -138,11 +136,7 @@ export default function AuditPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>稽核日誌</h1>
-          <p className={styles.pageSubtitle}>查看所有系統操作記錄</p>
-        </div>
+      <PageHeader title="稽核日誌" subtitle="查看所有系統操作記錄">
         <button
           type="button"
           className={styles.btnSecondary}
@@ -152,7 +146,7 @@ export default function AuditPage() {
           <MIcon name="download" size={16} />
           {exporting ? "匯出中..." : "匯出 CSV"}
         </button>
-      </div>
+      </PageHeader>
 
       {stats && (
         <div className={styles.summaryGrid}>
@@ -238,7 +232,7 @@ export default function AuditPage() {
 
       <div className={styles.content}>
         {loading ? (
-          <div className={styles.loading}>載入稽核日誌...</div>
+          <LoadingState fullPage text="載入稽核日誌..." />
         ) : logs.length === 0 ? (
           <EmptyState hasFilter={hasFilter} />
         ) : (
@@ -258,7 +252,7 @@ export default function AuditPage() {
                       <td className={`${styles.td} ${styles.tdNowrap}`}>{formatTime(log.created_at)}</td>
                       <td className={styles.td}>
                         <div className={styles.userCell}>
-                          <span>{log.user_full_name ?? "—"}</span>
+                          <span>{log.user_full_name ?? (log.user_email ? "—" : "系統")}</span>
                           <span className={styles.userEmail}>{log.user_email ?? ""}</span>
                         </div>
                       </td>

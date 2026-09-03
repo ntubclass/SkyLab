@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./BatchReviewPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import SharedEmptyState from "../../../components/EmptyState/EmptyState";
 import { BatchProvisionService } from "../../../services/batchProvision";
+import { useConfirm } from "../../../components/ConfirmDialog/ConfirmProvider";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
+import LoadingState from "../../../components/LoadingState/LoadingState";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 const STATUS_LABELS = {
   pending_review: "待審核",
@@ -26,17 +30,7 @@ const STATUS_OPTIONS = [
 ];
 
 function EmptyState() {
-  return (
-    <div className={styles.empty}>
-      <div className={styles.emptyIcon}>
-        <MIcon name="library_add_check" size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>沒有待審核的批次申請</h2>
-      <p className={styles.emptyDesc}>
-        教師或助教提交的批量 VM 建立申請會顯示在這裡
-      </p>
-    </div>
-  );
+  return <SharedEmptyState icon="library_add_check" title="沒有待審核的批次申請" />;
 }
 
 function StatusBadge({ status }) {
@@ -67,8 +61,39 @@ function ProgressInline({ done, failed, total }) {
 
 const COLUMNS = ["批次名稱", "申請人", "課程", "VM 數量", "進度", "狀態", "提交時間", "動作"];
 
+function groupClassReviews(batches) {
+  const rows = [];
+  const classGroups = new Map();
+  for (const batch of batches) {
+    if (!batch.teaching_class_id) {
+      rows.push({ ...batch, jobs: [batch] });
+      continue;
+    }
+    const group = classGroups.get(batch.teaching_class_id) ?? [];
+    group.push(batch);
+    classGroups.set(batch.teaching_class_id, group);
+  }
+  for (const [classId, jobs] of classGroups) {
+    const first = jobs[0];
+    rows.push({
+      ...first,
+      id: `class-${classId}`,
+      jobs,
+      teaching_class_id: classId,
+      hostname_prefix: `${first.teaching_class_name ?? "班級"} · ${jobs.length} 個節點`,
+      resource_type: [...new Set(jobs.map((job) => job.resource_type?.toUpperCase()))].join(" / "),
+      total: jobs.reduce((sum, job) => sum + (job.total ?? 0), 0),
+      done: jobs.reduce((sum, job) => sum + (job.done ?? 0), 0),
+      failed_count: jobs.reduce((sum, job) => sum + (job.failed_count ?? 0), 0),
+      created_at: jobs.map((job) => job.created_at).sort()[0],
+    });
+  }
+  return rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+}
+
 export default function BatchReviewPage() {
   const toast = useToast();
+  const confirm = useConfirm();
   const [batches, setBatches] = useState([]);
   const [status, setStatus] = useState("all");
   const [query, setQuery] = useState("");
@@ -107,10 +132,24 @@ export default function BatchReviewPage() {
   useEffect(() => { load(); }, [load]);
   useAutoRefresh(() => load(true));
 
-  const review = async (jobId, decision) => {
-    if (!window.confirm(decision === "approved" ? "確定核准此批次?" : "確定駁回此批次?")) return;
+  const review = async (row, decision) => {
+    const target = row.teaching_class_id
+      ? `「${row.teaching_class_name}」的 ${row.jobs.length} 個機器節點`
+      : "此批次";
+    const approved = decision === "approved";
+    const ok = await confirm({
+      title: approved ? "核准批量申請" : "駁回批量申請",
+      message: approved ? `確定核准${target}？` : `確定駁回${target}？`,
+      confirmText: approved ? "核准" : "駁回",
+      danger: !approved,
+    });
+    if (!ok) return;
     try {
-      await BatchProvisionService.review(jobId, { decision });
+      if (row.teaching_class_id) {
+        await BatchProvisionService.reviewClass(row.teaching_class_id, { decision });
+      } else {
+        await BatchProvisionService.review(row.id, { decision });
+      }
       toast.success(decision === "approved" ? "已核准" : "已駁回");
       load();
     } catch (e) {
@@ -118,37 +157,34 @@ export default function BatchReviewPage() {
     }
   };
 
+  const reviewRows = useMemo(() => groupClassReviews(batches), [batches]);
+
   const stats = useMemo(() => {
-    const pending = batches.filter((b) => b.status === "pending_review").length;
-    const inProgress = batches.filter((b) =>
+    const pending = reviewRows.filter((b) => b.status === "pending_review").length;
+    const inProgress = reviewRows.filter((b) =>
       ["approved", "pending", "running"].includes(b.status),
     ).length;
-    const totalVms = batches.reduce((s, b) => s + (b.total ?? 0), 0);
+    const totalVms = reviewRows.reduce((s, b) => s + (b.total ?? 0), 0);
     return { pending, inProgress, totalVms };
-  }, [batches]);
+  }, [reviewRows]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return batches.filter((b) => {
+    return reviewRows.filter((b) => {
       if (status !== "all" && b.status !== status) return false;
       if (!q) return true;
       return (
         (b.hostname_prefix ?? "").toLowerCase().includes(q) ||
         (b.initiated_by_email ?? "").toLowerCase().includes(q) ||
         (b.initiated_by_name ?? "").toLowerCase().includes(q) ||
-        (b.group_name ?? "").toLowerCase().includes(q)
+        (b.teaching_class_name ?? "").toLowerCase().includes(q)
       );
     });
-  }, [batches, status, query]);
+  }, [reviewRows, status, query]);
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>批量建立審核</h1>
-          <p className={styles.pageSubtitle}>審核教師提交的批次 VM 配置申請</p>
-        </div>
-      </div>
+      <PageHeader title="批量審核" subtitle="審核教師提交的批次 VM 配置申請" />
 
       <div className={styles.statRow}>
         <div className={styles.statCard}>
@@ -206,7 +242,9 @@ export default function BatchReviewPage() {
       </div>
 
       <div className={styles.content}>
-        {visible.length === 0 ? (
+        {loading ? (
+          <LoadingState fullPage />
+        ) : visible.length === 0 ? (
           <EmptyState />
         ) : (
           <div className={styles.tableWrap}>
@@ -225,9 +263,6 @@ export default function BatchReviewPage() {
                     <tr key={b.id} className={styles.tr}>
                       <td className={styles.td}>
                         <div className={styles.nameCell}>
-                          <div className={styles.nameIcon}>
-                            <MIcon name="library_add" size={18} />
-                          </div>
                           <div>
                             <div className={styles.namePrimary}>{b.hostname_prefix}</div>
                             <div className={styles.nameSub}>{b.resource_type?.toUpperCase()}</div>
@@ -237,20 +272,20 @@ export default function BatchReviewPage() {
                                   type="button"
                                   className={styles.recurChip}
                                   title="點擊查看未來開機時段"
-                                  onClick={() => togglePreview(b.id)}
+                                  onClick={() => togglePreview(b.jobs?.[0]?.id ?? b.id)}
                                 >
                                   <MIcon name="update" size={12} />
                                   週期排程
                                 </button>
-                                {Array.isArray(previews[b.id]) && (
+                                {Array.isArray(previews[b.jobs?.[0]?.id ?? b.id]) && (
                                   <ul className={styles.recurWindows}>
-                                    {previews[b.id].length === 0 && <li>沒有排定的時段</li>}
-                                    {previews[b.id].map(([start, end]) => (
+                                    {previews[b.jobs?.[0]?.id ?? b.id].length === 0 && <li>沒有排定的時段</li>}
+                                    {previews[b.jobs?.[0]?.id ?? b.id].map(([start, end]) => (
                                       <li key={start}>{fmtTime(start)} ～ {fmtTime(end)}</li>
                                     ))}
                                   </ul>
                                 )}
-                                {previews[b.id] === "loading" && (
+                                {previews[b.jobs?.[0]?.id ?? b.id] === "loading" && (
                                   <span className={styles.recurLoading}>載入中…</span>
                                 )}
                               </>
@@ -259,7 +294,7 @@ export default function BatchReviewPage() {
                         </div>
                       </td>
                       <td className={styles.td}>{b.initiated_by_email ?? b.initiated_by_name ?? "—"}</td>
-                      <td className={styles.td}>{b.group_name ?? "—"}</td>
+                      <td className={styles.td}>{b.teaching_class_name ?? "—"}</td>
                       <td className={styles.td}>{b.total}</td>
                       <td className={styles.td}>
                         <ProgressInline
@@ -279,7 +314,7 @@ export default function BatchReviewPage() {
                             className={`${styles.actionBtn} ${styles.actionBtnOk}`}
                             title="核准"
                             disabled={!canReview}
-                            onClick={() => review(b.id, "approved")}
+                            onClick={() => review(b, "approved")}
                           >
                             <MIcon name="check" size={16} />
                           </button>
@@ -288,7 +323,7 @@ export default function BatchReviewPage() {
                             className={`${styles.actionBtn} ${styles.actionBtnDanger}`}
                             title="駁回"
                             disabled={!canReview}
-                            onClick={() => review(b.id, "rejected")}
+                            onClick={() => review(b, "rejected")}
                           >
                             <MIcon name="close" size={16} />
                           </button>

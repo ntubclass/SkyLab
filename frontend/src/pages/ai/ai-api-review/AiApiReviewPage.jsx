@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import styles from "./AiApiReviewPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import LoadingState from "../../../components/LoadingState/LoadingState";
+import SharedEmptyState from "../../../components/EmptyState/EmptyState";
 import { AiApiService } from "../../../services/aiApi";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
+import useDialogPresence from "../../../hooks/useDialogPresence";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 const TABS = [
   { key: "pending",  label: "待審核" },
@@ -23,22 +27,8 @@ function fmtTime(iso) {
   return iso ? new Date(iso).toLocaleString("zh-TW") : "尚未審核";
 }
 
-function EmptyState({ tab }) {
-  const text = {
-    pending:  "目前沒有符合條件的 AI API 申請",
-    approved: "目前沒有已通過的 AI API 申請",
-    rejected: "目前沒有已拒絕的 AI API 申請",
-    all:      "目前沒有任何 AI API 申請紀錄",
-  };
-  return (
-    <div className={styles.empty}>
-      <div className={styles.emptyIcon}>
-        <MIcon name="assignment_turned_in" size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>尚無資料</h2>
-      <p className={styles.emptyDesc}>{text[tab]}</p>
-    </div>
-  );
+function EmptyState() {
+  return <SharedEmptyState icon="assignment_turned_in" title="尚無資料" />;
 }
 
 /* ── Review Dialog ── */
@@ -46,8 +36,10 @@ function ReviewDialog({ open, onClose, request, action, onDone }) {
   const toast = useToast();
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // 關閉時先播放離場動畫再卸載
+  const presence = useDialogPresence(open);
 
-  if (!open || !request) return null;
+  if (!presence.open || !request) return null;
 
   const isApprove = action === "approved";
 
@@ -72,7 +64,10 @@ function ReviewDialog({ open, onClose, request, action, onDone }) {
   // Portal 到 body：此 Dialog 由表格列觸發，若直接掛在 .tableWrap（backdrop-filter）
   // 底下，position: fixed 會以卡片為 containing block，遮罩蓋不滿整個視窗
   return createPortal(
-    <div className={styles.dialogOverlay} onClick={onClose}>
+    <div
+      className={`${styles.dialogOverlay} ${presence.closing ? styles.dialogOverlayOut : ""}`}
+      onClick={onClose}
+    >
       <div className={styles.dialog} onClick={(e) => e.stopPropagation()}>
         <div className={styles.dialogHeader}>
           <h3 className={styles.dialogTitle}>
@@ -205,12 +200,7 @@ export default function AiApiReviewPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>AI API 申請審核</h1>
-          <p className={styles.pageSubtitle}>審核申請並核發 API 存取參數。</p>
-        </div>
-      </div>
+      <PageHeader title="申請審核" subtitle="審核申請並核發 API 存取參數。" />
 
       <div className={styles.tabs}>
         {TABS.map((tab) => (
@@ -227,7 +217,7 @@ export default function AiApiReviewPage() {
 
       <div className={styles.content}>
         {loading ? (
-          <div className={styles.loadingText}>載入中…</div>
+          <LoadingState fullPage />
         ) : filtered.length === 0 ? (
           <EmptyState tab={activeTab} />
         ) : (

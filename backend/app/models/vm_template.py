@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 
 import sqlalchemy as sa
-from sqlmodel import Column, DateTime, Enum, Field, SQLModel, UniqueConstraint
+from sqlmodel import Column, DateTime, Enum, Field, SQLModel
 
 from .base import get_datetime_utc
 
@@ -20,7 +20,7 @@ class VMTemplateStatus(str, enum.Enum):
 
 class VMTemplateVisibility(str, enum.Enum):
     global_ = "global"
-    groups = "groups"
+    private = "private"
 
 
 class VMTemplate(SQLModel, table=True):
@@ -67,7 +67,7 @@ class VMTemplate(SQLModel, table=True):
         ),
     )
     visibility: VMTemplateVisibility = Field(
-        default=VMTemplateVisibility.groups,
+        default=VMTemplateVisibility.private,
         sa_column=Column(
             # global_ 成員名與值 "global" 不同，必須以值入庫
             Enum(
@@ -75,12 +75,32 @@ class VMTemplate(SQLModel, table=True):
                 values_callable=lambda enum_cls: [m.value for m in enum_cls],
             ),
             nullable=False,
-            default=VMTemplateVisibility.groups,
+            default=VMTemplateVisibility.private,
         ),
     )
     default_cores: int | None = Field(default=None, description="克隆預設 CPU 核數")
     default_memory: int | None = Field(default=None, description="克隆預設記憶體 MB")
-    default_disk: int | None = Field(default=None, description="克隆預設磁碟 GB")
+    default_disk: int | None = Field(
+        default=None,
+        description="範本磁碟 GB（轉換完成時自動偵測，唯讀；克隆固定沿用）",
+    )
+    allow_password_change: bool = Field(
+        default=True,
+        sa_column=Column(
+            sa.Boolean, nullable=False, server_default=sa.true()
+        ),
+        description="克隆時是否允許使用者自訂/重設登入密碼；否則沿用範本內建帳密",
+    )
+    student_requestable: bool = Field(
+        default=False,
+        sa_column=Column(
+            sa.Boolean, nullable=False, server_default=sa.false()
+        ),
+        description="學生可否在一般申請表單直接選用這個範本（仍走審核）",
+    )
+    icon_url: str | None = Field(
+        default=None, max_length=512, description="範本 icon 圖片 URL（選填）"
+    )
     source_vmid: int | None = Field(
         default=None,
         description="建立範本時的來源母機 VMID",
@@ -97,15 +117,10 @@ class VMTemplate(SQLModel, table=True):
     )
 
 
-class VMTemplateGroupLink(SQLModel, table=True):
-    """範本 ↔ 群組可見範圍關聯"""
+class TemplateAttachment(SQLModel, table=True):
+    """範本附件（使用手冊等）。實體檔存 data/template_files/{template_id}/。"""
 
-    __tablename__ = "vm_template_group_links"
-    __table_args__ = (
-        UniqueConstraint(
-            "template_id", "group_id", name="uq_vm_template_group_links"
-        ),
-    )
+    __tablename__ = "template_attachments"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     template_id: uuid.UUID = Field(
@@ -114,21 +129,20 @@ class VMTemplateGroupLink(SQLModel, table=True):
             sa.ForeignKey("vm_templates.id", ondelete="CASCADE"),
             nullable=False,
             index=True,
-        )
+        ),
     )
-    group_id: uuid.UUID = Field(
-        sa_column=Column(
-            sa.Uuid,
-            sa.ForeignKey("group.id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-        )
+    filename: str = Field(max_length=255, description="原始檔名（下載時還原）")
+    content_type: str | None = Field(default=None, max_length=100)
+    size_bytes: int = Field(default=0)
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
     )
 
 
 __all__ = [
+    "TemplateAttachment",
     "VMTemplate",
-    "VMTemplateGroupLink",
     "VMTemplateStatus",
     "VMTemplateVisibility",
 ]

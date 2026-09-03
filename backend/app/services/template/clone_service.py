@@ -2,12 +2,20 @@
 
 請求端（request_clone）做權限/配額校驗與任務入列；worker 端（run_clone_task）
 執行 PVE 克隆：linked clone 優先、失敗自動退 full clone，克隆後重配置
-hostname / IP / SSH 金鑰 / 防火牆並寫入 Resource 紀錄。
+hostname / IP / SSH 金鑰 / 隨機登入密碼 / 防火牆並寫入 Resource 紀錄。
+
+登入密碼：每台克隆機各發一組隨機密碼。qemu 走 cloud-init ``cipassword``
+（首次開機由 guest 內 cloud-init / cloudbase-init 套用到預設使用者）；
+LXC 無 cloud-init，開機後 best-effort 以 ``pct exec chpasswd`` 設定 root
+密碼，失敗則沿用範本內建憑證且不記錄密碼。
 """
 
 from __future__ import annotations
 
 import logging
+import secrets
+import shlex
+import time
 import uuid
 from datetime import date
 from typing import Any
@@ -15,16 +23,15 @@ from urllib.parse import quote
 
 from sqlmodel import Session
 
-from app.core.config import settings
+from app.core.authorizers import require_template_manage
 from app.core.db import engine
-from app.core.permissions import is_admin
-from app.core.security import encrypt_value
+from app.core.security import decrypt_value, encrypt_value
 from app.exceptions import (
+    BadRequestError,
     ConflictError,
     NotFoundError,
-    PermissionDeniedError,
 )
-from app.infrastructure.proxmox import get_proxmox_settings
+from app.infrastructure.proxmox import get_proxmox_settings_for_node
 from app.infrastructure.proxmox import operations as proxmox_ops
 from app.infrastructure.queue import enqueue_task, report_progress
 from app.infrastructure.ssh.client import generate_ed25519_keypair
@@ -38,6 +45,19 @@ from app.utils.hostname import to_punycode_hostname
 logger = logging.getLogger(__name__)
 
 TASK_CLONE = "template.clone"
+
+# 排除易混淆字元（0O1lI）的英數字母表；密碼須可在 VNC console 徒手輸入
+_PASSWORD_ALPHABET = "abcdefghijkmnpqrstuvwxyzACDEFGHJKLMNPQRSTUVWXYZ23456789"
+_PASSWORD_LENGTH = 12
+
+_LXC_PASSWORD_ATTEMPTS = 6
+_LXC_PASSWORD_RETRY_SECONDS = 5.0
+
+
+def generate_login_password() -> str:
+    return "".join(
+        secrets.choice(_PASSWORD_ALPHABET) for _ in range(_PASSWORD_LENGTH)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +82,10 @@ async def request_clone(
     template_id: uuid.UUID,
     data: TemplateCloneRequest,
 ) -> list[TaskRecord]:
+    # 單機母模板是教師／管理員用來建構環境的來源。學生只能透過
+    # QuickPracticeSession 或正式班級取得固定環境，不得直接繞過環境
+    # 的期限、次數與整組生命週期規則呼叫 clone service。
+    require_template_manage(user)
     template = template_service._get_or_404(session, template_id)
     template_service._require_view(session, user, template)
     if template.status != VMTemplateStatus.ready:
@@ -69,18 +93,20 @@ async def request_clone(
             f"Template is not ready to clone (now: {template.status.value})"
         )
 
-    can_manage = template_service._can_manage(user)
-    if data.count > 1 and not can_manage:
-        raise PermissionDeniedError("Only teachers and admins can batch clone")
-
-    if not can_manage and not is_admin(user):
-        owned = len(
-            resource_repo.get_resources_by_user(session=session, user_id=user.id)
+    if data.login_password and not template.allow_password_change:
+        raise BadRequestError("此範本不允許自訂登入密碼")
+    if data.gpu_mapping_id:
+        if template.resource_type == "lxc":
+            raise BadRequestError("LXC 範本不支援 GPU 直通")
+        from app.services.proxmox.provisioning_service import (  # noqa: PLC0415
+            _gpu_mapping_nodes,
         )
-        limit = settings.TEMPLATE_CLONE_STUDENT_MAX_INSTANCES
-        if owned + data.count > limit:
-            raise ConflictError(
-                f"Resource quota exceeded: you have {owned} of {limit} instances"
+
+        gpu_nodes = _gpu_mapping_nodes(data.gpu_mapping_id)
+        if template.node not in gpu_nodes:
+            raise BadRequestError(
+                f"所選 GPU 不在範本所在節點 {template.node} 上，"
+                "請改選其他 GPU"
             )
 
     hostnames = _build_hostnames(data.hostname, template.name, data.count)
@@ -97,8 +123,17 @@ async def request_clone(
                 "hostname": hostname,
                 "cores": data.cores,
                 "memory": data.memory,
-                "disk": data.disk,
+                # 磁碟不開放調整：固定沿用範本磁碟（batch 路徑仍可帶 disk）
                 "start": data.start,
+                "allow_password_reset": template.allow_password_change,
+                # payload 會落 DB（TaskRecord.payload），密碼必須加密存放
+                "login_password_enc": (
+                    encrypt_value(data.login_password)
+                    if data.login_password
+                    else None
+                ),
+                "gpu_mapping_id": data.gpu_mapping_id,
+                "gpu_mdev_profile": data.gpu_mdev_profile,
             },
         )
         records.append(record)
@@ -123,7 +158,7 @@ def clone_with_fallback(
     ``full_kwargs`` 只在退 full clone 時併入（例如指定 storage——
     linked clone 必須與範本同 storage，不能帶該參數）。
     """
-    pool = get_proxmox_settings().pool_name
+    pool = get_proxmox_settings_for_node(node).pool_name
     name_key = "hostname" if resource_type == "lxc" else "name"
     clone_fn = (
         proxmox_ops.clone_lxc if resource_type == "lxc" else proxmox_ops.clone_vm
@@ -163,6 +198,7 @@ def _reconfigure_qemu(
     memory: int | None,
     disk: int | None,
     public_key: str,
+    login_password: str | None,
     net_cfg: dict[str, Any],
     allocated_ip: str,
 ) -> None:
@@ -175,6 +211,10 @@ def _reconfigure_qemu(
             f"ip={allocated_ip}/{net_cfg['prefix_len']},gw={net_cfg['gateway']}"
         ),
     }
+    if login_password is not None:
+        # cloud-init 首次開機套用密碼（PVE 存 hash）；範本禁止改密碼時
+        # 完全不帶 cipassword，沿用範本內建帳密
+        config_updates["cipassword"] = login_password
     if cores:
         config_updates["cores"] = cores
     if memory:
@@ -196,7 +236,8 @@ def _reconfigure_lxc(
     net_cfg: dict[str, Any],
     allocated_ip: str,
 ) -> None:
-    # LXC 無 cloud-init：SSH 金鑰無法在克隆後注入，登入沿用範本內建憑證
+    # LXC 無 cloud-init：SSH 金鑰無法在克隆後注入；root 密碼於開機後
+    # 以 pct exec 設定（見 _set_lxc_root_password），失敗才沿用範本內建憑證
     config_updates: dict[str, Any] = {
         "hostname": hostname,
         "net0": (
@@ -212,6 +253,33 @@ def _reconfigure_lxc(
     if net_cfg.get("dns_servers"):
         config_updates["nameserver"] = net_cfg["dns_servers"]
     proxmox_ops.update_config(node, vmid, "lxc", **config_updates)
+
+
+def _set_lxc_root_password(node: str, vmid: int, password: str) -> bool:
+    """開機後以 ``pct exec chpasswd`` 設定 root 密碼（容器啟動需時，重試等待）。
+
+    LXC config API 不接受 password（僅限建立時），只能進容器內改。
+    回傳是否成功；失敗方（呼叫端）不得記錄未生效的密碼。
+    """
+    from app.infrastructure.proxmox import guest
+
+    command = f"echo {shlex.quote(f'root:{password}')} | chpasswd"
+    last_error: str = ""
+    for attempt in range(_LXC_PASSWORD_ATTEMPTS):
+        if attempt:
+            time.sleep(_LXC_PASSWORD_RETRY_SECONDS)
+        try:
+            code, _out, err = guest.exec_lxc(node, vmid, command)
+        except Exception as exc:
+            last_error = str(exc)
+            continue
+        if code == 0:
+            return True
+        last_error = (err or "").strip()
+    logger.warning(
+        "Failed to set root password for CT %d: %s", vmid, last_error[:300]
+    )
+    return False
 
 
 def _parse_expiry(raw: Any) -> date | None:
@@ -236,10 +304,15 @@ def run_clone_task(task_id: uuid.UUID, payload: dict[str, Any]) -> dict[str, Any
     memory = payload.get("memory")
     disk = payload.get("disk")
     start = bool(payload.get("start", True))
+    allow_password_reset = bool(payload.get("allow_password_reset", True))
+    login_password_enc = payload.get("login_password_enc")
+    gpu_mapping_id = payload.get("gpu_mapping_id")
+    gpu_mdev_profile = payload.get("gpu_mdev_profile")
     raw_batch = payload.get("batch_job_id")
     batch_job_id = uuid.UUID(str(raw_batch)) if raw_batch else None
     environment_type = payload.get("environment_type")
     expiry_date = _parse_expiry(payload.get("expiry_date"))
+    ip_reservation_key = payload.get("ip_reservation_key")
 
     with Session(engine) as session:
         template = session.get(VMTemplate, template_id)
@@ -258,7 +331,12 @@ def run_clone_task(task_id: uuid.UUID, payload: dict[str, Any]) -> dict[str, Any
         new_vmid = proxmox_ops.next_vmid()
         net_cfg = ip_management_service.get_network_config_for_vm(session)
         purpose = "lxc" if resource_type == "lxc" else "vm"
-        allocated_ip = ip_management_service.allocate_ip(session, new_vmid, purpose)
+        allocated_ip = ip_management_service.allocate_ip(
+            session,
+            new_vmid,
+            purpose,
+            reservation_key=ip_reservation_key,
+        )
         # 先提交 IP 分配，避免克隆期間（可能數分鐘）併發任務撞 IP
         session.commit()
 
@@ -277,6 +355,16 @@ def run_clone_task(task_id: uuid.UUID, payload: dict[str, Any]) -> dict[str, Any
         report_progress(task_id, 60)
 
         private_key_pem, public_key = generate_ed25519_keypair()
+        # 範本禁止改密碼時完全不重設，沿用範本內建帳密；
+        # 允許時優先用使用者自訂密碼，未填才發隨機密碼
+        login_password: str | None = None
+        if allow_password_reset:
+            login_password = (
+                decrypt_value(str(login_password_enc))
+                if login_password_enc
+                else generate_login_password()
+            )
+        password_applied = False
         if resource_type == "qemu":
             _reconfigure_qemu(
                 node=node,
@@ -286,9 +374,27 @@ def run_clone_task(task_id: uuid.UUID, payload: dict[str, Any]) -> dict[str, Any
                 memory=memory,
                 disk=disk,
                 public_key=public_key,
+                login_password=login_password,
                 net_cfg=net_cfg,
                 allocated_ip=allocated_ip,
             )
+            # cipassword 已寫入 config，首次開機由 cloud-init 套用
+            password_applied = login_password is not None
+            if gpu_mapping_id:
+                # 容量與 vGPU 規格以掛載當下重新驗證（與申請流程同一套檢查）
+                from app.services.proxmox.provisioning_service import (  # noqa: PLC0415
+                    _build_gpu_hostpci,
+                )
+
+                proxmox_ops.update_config(
+                    node,
+                    new_vmid,
+                    "qemu",
+                    hostpci0=_build_gpu_hostpci(
+                        str(gpu_mapping_id),
+                        str(gpu_mdev_profile) if gpu_mdev_profile else None,
+                    ),
+                )
         else:
             _reconfigure_lxc(
                 node=node,
@@ -304,6 +410,10 @@ def run_clone_task(task_id: uuid.UUID, payload: dict[str, Any]) -> dict[str, Any
         firewall_service.setup_default_rules(node, new_vmid, resource_type)
         if start:
             proxmox_ops.control(node, new_vmid, resource_type, "start")
+            if resource_type == "lxc" and login_password is not None:
+                password_applied = _set_lxc_root_password(
+                    node, new_vmid, login_password
+                )
         report_progress(task_id, 90)
 
         with Session(engine) as session:
@@ -320,13 +430,22 @@ def run_clone_task(task_id: uuid.UUID, payload: dict[str, Any]) -> dict[str, Any
                     else None
                 ),
                 ssh_public_key=public_key if resource_type == "qemu" else None,
+                login_password_encrypted=(
+                    encrypt_value(login_password)
+                    if password_applied and login_password is not None
+                    else None
+                ),
                 batch_job_id=batch_job_id,
             )
     except Exception:
         # 失敗清理：釋放 IP → 撤防火牆規則 → 刪除半成品
         try:
             with Session(engine) as cleanup_session:
-                ip_management_service.release_ip(cleanup_session, new_vmid)
+                ip_management_service.release_ip(
+                    cleanup_session,
+                    new_vmid,
+                    restore_reservation=bool(ip_reservation_key),
+                )
                 cleanup_session.commit()
         except Exception:
             logger.warning("Failed to release IP for VMID %d", new_vmid)
@@ -361,12 +480,14 @@ def run_clone_task(task_id: uuid.UUID, payload: dict[str, Any]) -> dict[str, Any
         "clone_mode": clone_mode,
         "ip": allocated_ip,
         "hostname": hostname,
+        "login_password_set": password_applied,
     }
 
 
 __all__ = [
     "TASK_CLONE",
     "clone_with_fallback",
+    "generate_login_password",
     "request_clone",
     "run_clone_task",
 ]

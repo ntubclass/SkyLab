@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../../../contexts/AuthContext";
 import styles from "./RequestsPage.module.scss";
 import { VmRequestsService } from "../../../services/vmRequests";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
 import RequestFormPage from "./RequestFormPage";
 import MIcon from "../../../components/MIcon";
+import SharedEmptyState from "../../../components/EmptyState/EmptyState";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 /* ── Constants ── */
 const STATUS_MAP = {
@@ -13,6 +16,7 @@ const STATUS_MAP = {
   approved:  { label: "已核准", color: "success" },
   rejected:  { label: "已拒絕", color: "danger"  },
   cancelled: { label: "已取消", color: "muted"   },
+  expired:   { label: "已過期", color: "muted"   },
 };
 
 const RESOURCE_TYPE_MAP = {
@@ -38,10 +42,22 @@ function canCancel(req) {
   );
 }
 
+/* 機器已建立（vmid 已寫回）但排程器後續維運失敗：
+   後端 retry 會拒絕這種狀態，只能到「我的資源」操作或刪除該機器 */
+function isProvisionedButFailed(req) {
+  return (
+    req.status === "approved" &&
+    req.vmid != null &&
+    req.provisioning_status === "failed"
+  );
+}
 /* approved 在 UI 上再依開通進度細分（vmid 為空時 provisioning_status 反映開通流程） */
 function getDisplayStatus(req) {
   if (req.status === "approved") {
-    if (req.vmid != null)                    return { label: "已開通",   color: "success" };
+    if (req.vmid != null) {
+      if (req.provisioning_status === "failed") return { label: "機器異常", color: "danger" };
+      return { label: "已開通", color: "success" };
+    }
     if (req.provisioning_status === "failed") return { label: "開通失敗", color: "danger" };
     if (req.provisioning_status === "running") return { label: "開通中", color: "info" };
     return { label: "已核准", color: "success" };
@@ -83,7 +99,6 @@ function getFormInfoItems(req) {
   const items = [];
   if (req.username)             items.push({ label: "帳號",   value: req.username });
   if (req.gpu_mapping_id)       items.push({ label: "GPU",    value: req.gpu_mapping_id });
-  if (req.service_template_slug) items.push({ label: "服務模板", value: req.service_template_slug });
   return items;
 }
 
@@ -162,6 +177,10 @@ function ConfirmModal({ title, desc, confirmLabel = "確定", danger = false, lo
 /* ── RequestRow ── */
 function RequestRow({ req, onUpdated }) {
   const toast = useToast();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  /* VMID 是系統內部編號，僅管理員／老師看得到 */
+  const showVmid = user?.is_superuser || user?.role === "admin" || user?.role === "teacher";
   const [expanded, setExpanded]           = useState(false);
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [cancelling, setCancelling]       = useState(false);
@@ -174,9 +193,11 @@ function RequestRow({ req, onUpdated }) {
   const endFmt    = formatDatetime(req.end_at);
 
   const showRejection = req.status === "rejected" && req.review_comment;
-  const showFailure = canRetry(req) && req.provisioning_status === "failed" && req.provisioning_error;
+  const showFailure =
+    (canRetry(req) || isProvisionedButFailed(req)) && req.provisioning_error;
   const hasDetail =
     formItems.length > 0 || req.reason || startFmt || showRejection || showFailure;
+  const hasAction = canRetry(req) || canCancel(req) || isProvisionedButFailed(req);
 
   async function handleCancel() {
     setCancelling(true);
@@ -209,18 +230,32 @@ function RequestRow({ req, onUpdated }) {
     <>
       <tr
         className={`${styles.tr} ${hasDetail ? styles.trClickable : ""} ${expanded ? styles.trExpanded : ""}`}
-        onClick={hasDetail ? () => setExpanded((v) => !v) : undefined}
+        onClick={hasDetail ? (event) => {
+          /* 整列都可以開合，列內的按鈕（重試、撤銷…）各自處理自己的點擊 */
+          if (event.target.closest("button")) return;
+          setExpanded((v) => !v);
+        } : undefined}
       >
         <td className={styles.td}>
           <div className={styles.nameCell}>
-            <div className={styles.nameIcon}>
-              <MIcon name={type.icon} size={18} />
-            </div>
+            {hasDetail ? (
+              <button
+                type="button"
+                className={styles.expandBtn}
+                aria-expanded={expanded}
+                aria-label={expanded ? "收合詳細資訊" : "展開詳細資訊"}
+                onClick={() => setExpanded((v) => !v)}
+              >
+                <MIcon name={expanded ? "expand_more" : "chevron_right"} size={16} />
+              </button>
+            ) : (
+              <span className={styles.expandPlaceholder} aria-hidden="true" />
+            )}
             <div className={styles.nameMeta}>
               <span className={styles.namePrimary}>{req.hostname}</span>
               <span className={styles.nameSub}>
                 {type.label}
-                {req.vmid != null && ` · VMID ${req.vmid}`}
+                {showVmid && req.vmid != null && ` · 編號 ${req.vmid}`}
               </span>
             </div>
           </div>
@@ -233,8 +268,9 @@ function RequestRow({ req, onUpdated }) {
         </td>
         <td className={styles.td}>{formatDate(req.created_at)}</td>
         <td className={styles.td}><StatusBadge req={req} /></td>
-        <td className={styles.td} onClick={(e) => e.stopPropagation()}>
+        <td className={styles.td}>
           <div className={styles.rowActions}>
+            {!hasAction && <span className={styles.emptyAction}>—</span>}
             {canRetry(req) && (
               <button type="button" className={styles.retryBtn} disabled={retrying} onClick={handleRetry}>
                 <MIcon name="refresh" size={13} />
@@ -247,14 +283,10 @@ function RequestRow({ req, onUpdated }) {
                 撤銷
               </button>
             )}
-            {hasDetail && (
-              <button
-                type="button"
-                className={`${styles.expandBtn} ${expanded ? styles.expandBtnOpen : ""}`}
-                aria-label={expanded ? "收合詳細資訊" : "展開詳細資訊"}
-                onClick={() => setExpanded((v) => !v)}
-              >
-                <MIcon name="expand_more" size={16} />
+            {isProvisionedButFailed(req) && (
+              <button type="button" className={styles.retryBtn} onClick={() => navigate("/my-resources")}>
+                <MIcon name="inventory_2" size={13} />
+                前往我的資源
               </button>
             )}
           </div>
@@ -283,7 +315,11 @@ function RequestRow({ req, onUpdated }) {
               {showFailure && (
                 <div className={styles.reviewComment}>
                   <MIcon name="error_outline" size={13} />
-                  <span>{req.provisioning_error}</span>
+                  <span>
+                    {req.provisioning_error}
+                    {isProvisionedButFailed(req) &&
+                      "（機器已建立，此申請無法重試；請到「我的資源」開機或刪除這台機器。）"}
+                  </span>
                 </div>
               )}
             </div>
@@ -312,7 +348,7 @@ function SkeletonRow() {
     <tr className={styles.tr} aria-hidden>
       <td className={styles.td}>
         <div className={styles.nameCell}>
-          <div className={`${styles.nameIcon} ${styles.skeleton}`} />
+          <span className={styles.expandPlaceholder} aria-hidden="true" />
           <div className={styles.nameMeta}>
             <div className={`${styles.skeleton} ${styles.skRow}`} style={{ width: 110, height: 13 }} />
             <div className={`${styles.skeleton} ${styles.skRow}`} style={{ width: 70, height: 10 }} />
@@ -341,33 +377,31 @@ function SkeletonRow() {
 /* ── Empty / Error states ── */
 function EmptyState({ onCreateClick }) {
   return (
-    <div className={styles.empty}>
-      <div className={styles.emptyIcon}>
-        <MIcon name="description" size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>尚無申請紀錄</h2>
-      <p className={styles.emptyDesc}>你送出的虛擬機／容器申請將會顯示在這裡</p>
-      <button type="button" className={styles.btnPrimary} onClick={onCreateClick}>
-        <MIcon name="add" size={16} />
-        立即申請
-      </button>
-    </div>
+    <SharedEmptyState
+      icon="description"
+      title="尚無申請紀錄"
+      action={
+        <button type="button" className={styles.btnPrimary} onClick={onCreateClick}>
+          <MIcon name="add" size={16} />
+          立即申請
+        </button>
+      }
+    />
   );
 }
 
 function ErrorState({ onRetry }) {
   return (
-    <div className={styles.empty}>
-      <div className={`${styles.emptyIcon} ${styles.emptyIconError}`}>
-        <MIcon name="error_outline" size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>載入失敗</h2>
-      <p className={styles.emptyDesc}>無法取得申請紀錄，請稍後再試</p>
-      <button type="button" className={styles.btnSecondary} onClick={onRetry}>
-        <MIcon name="refresh" size={16} />
-        重試
-      </button>
-    </div>
+    <EmptyState
+      icon="error_outline"
+      title="載入失敗"
+      action={
+        <button type="button" className={styles.btnSecondary} onClick={onRetry}>
+          <MIcon name="refresh" size={16} />
+          重試
+        </button>
+      }
+    />
   );
 }
 
@@ -380,6 +414,8 @@ export default function RequestsPage() {
   const [error, setError]       = useState(false);
   const [view, setView]         = useState(location.state?.create ? VIEW_CREATE : VIEW_LIST);
   const [returning, setReturning] = useState(false);
+  /* AI 助手談完需求後會把推薦配置一起帶過來 */
+  const [pendingPrefill, setPendingPrefill] = useState(location.state?.prefill ?? null);
 
   /** silent = true 時不觸發 loading / error state，供背景自動刷新使用 */
   const fetchRequests = useCallback(async (silent = false) => {
@@ -405,6 +441,14 @@ export default function RequestsPage() {
     if (view === "list") fetchRequests();
   }, [view, fetchRequests]);
 
+  /* 已經停在本頁時 useState 的初值不會再跑一次，所以導覽助手在這頁按步驟
+     只會換掉 location.state。兩個方向都要跟：帶 create 就開表單，沒帶就回列表
+     （流程裡的「等待審核」指的就是列表，按了不能沒反應）。 */
+  useEffect(() => {
+    setView(location.state?.create ? VIEW_CREATE : VIEW_LIST);
+    if (location.state?.prefill) setPendingPrefill(location.state.prefill);
+  }, [location.key, location.state?.create, location.state?.prefill]);
+
   useAutoRefresh(() => {
     if (view === "list") fetchRequests(true);
   });
@@ -418,7 +462,8 @@ export default function RequestsPage() {
       <RequestFormPage
         key="create"
         className={styles.animSlideInRight}
-        onBack={() => { setReturning(true); setView(VIEW_LIST); }}
+        initialPrefill={pendingPrefill}
+        onBack={() => { setReturning(true); setView(VIEW_LIST); setPendingPrefill(null); }}
       />
     );
   }
@@ -428,41 +473,39 @@ export default function RequestsPage() {
       className={`${styles.page} ${returning ? styles.animSlideInLeft : ""}`}
       onAnimationEnd={returning ? () => setReturning(false) : undefined}
     >
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>我的申請</h1>
-          <p className={styles.pageSubtitle}>管理你的虛擬機與容器申請</p>
-        </div>
-        <button type="button" className={styles.btnPrimary} onClick={() => setView(VIEW_CREATE)}>
+      <PageHeader title="我的申請" subtitle="管理你的虛擬機與容器申請">
+        <button type="button" className={styles.btnPrimary} onClick={() => setView(VIEW_CREATE)} data-guide="request-create">
           <MIcon name="add" size={16} />
           申請資源
         </button>
-      </div>
+      </PageHeader>
 
-      <div className={styles.content}>
+      <div className={styles.content} data-guide="request-list">
         {error ? (
           <ErrorState onRetry={fetchRequests} />
         ) : !loading && requests.length === 0 ? (
           <EmptyState onCreateClick={() => setView(VIEW_CREATE)} />
         ) : (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  {LIST_COLUMNS.map((column) => (
-                    <th key={column} className={styles.th}>{column}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {loading
-                  ? [0, 1, 2, 3].map((i) => <SkeletonRow key={i} />)
-                  : requests.map((r) => (
-                      <RequestRow key={r.id} req={r} onUpdated={handleUpdated} />
+          <>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    {LIST_COLUMNS.map((column) => (
+                      <th key={column} className={styles.th}>{column}</th>
                     ))}
-              </tbody>
-            </table>
-          </div>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading
+                    ? [0, 1, 2, 3].map((i) => <SkeletonRow key={i} />)
+                    : requests.map((r) => (
+                        <RequestRow key={r.id} req={r} onUpdated={handleUpdated} />
+                      ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
     </div>

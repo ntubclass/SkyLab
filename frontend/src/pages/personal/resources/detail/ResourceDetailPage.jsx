@@ -2,14 +2,13 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import styles from "./ResourceDetailPage.module.scss";
 import MIcon from "../../../../components/MIcon";
-import PairInviteDialog from "../../../../components/Teaching/PairInviteDialog";
-import ClassroomWatchDialog from "../../../../components/Classroom/ClassroomWatchDialog";
 import OverviewTab from "./OverviewTab";
 import MonitoringTab from "./MonitoringTab";
 import SpecificationsTab from "./SpecificationsTab";
 import SnapshotsTab from "./SnapshotsTab";
 import AuditLogsTab from "./AuditLogsTab";
 import AdvancedSettingsTab from "./AdvancedSettingsTab";
+import PageHeader from "../../../../components/PageHeader/PageHeader";
 
 const TABS = [
   { key: "overview",       label: "總覽",     icon: "info" },
@@ -28,13 +27,11 @@ export default function ResourceDetailPage({ backTo = "/my-resources" }) {
   const params = useParams();
   const vmid = Number.parseInt(params.vmid, 10);
   const [tab, setTab] = useState("overview");
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [pairSessionId, setPairSessionId] = useState(null);
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
+      <PageHeader
+        leading={
           <button
             type="button"
             className={styles.backBtn}
@@ -43,35 +40,9 @@ export default function ResourceDetailPage({ backTo = "/my-resources" }) {
           >
             <MIcon name="arrow_back" size={20} />
           </button>
-          <h1 className={styles.pageTitle}>
-            資源詳情 <span className={styles.vmidText}>#{vmid}</span>
-          </h1>
-        </div>
-        <button
-          type="button"
-          className={styles.inviteBtn}
-          onClick={() => setInviteOpen(true)}
-        >
-          <MIcon name="group_add" size={16} />
-          邀請協作
-        </button>
-      </div>
-
-      {inviteOpen && (
-        <PairInviteDialog
-          vmid={vmid}
-          onClose={() => setInviteOpen(false)}
-          onCreated={(sessionId) => setPairSessionId(sessionId)}
-        />
-      )}
-      {pairSessionId && (
-        <ClassroomWatchDialog
-          sessionId={pairSessionId}
-          title={`協作 VM ${vmid}`}
-          pair
-          onClose={() => setPairSessionId(null)}
-        />
-      )}
+        }
+        title={<>資源詳情 <span className={styles.vmidText}>#{vmid}</span></>}
+      />
 
       <div className={styles.tabs}>
         {TABS.map((t) => (

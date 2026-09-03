@@ -9,7 +9,7 @@ from app.api.deps import (
     ResourceInfoDep,
     SessionDep,
 )
-from app.core.authorizers import can_bypass_resource_ownership, require_resource_access
+from app.core.authorizers import can_bypass_resource_ownership
 from app.core.security import decrypt_value
 from app.exceptions import NotFoundError, PermissionDeniedError, ProxmoxError
 from app.infrastructure.worker import submit_sync
@@ -25,6 +25,7 @@ from app.schemas.resource import (
 )
 from app.services.proxmox import proxmox_service
 from app.services.resource import deletion_service, resource_service
+from app.services.resource.access import require_resource_management
 
 logger = logging.getLogger(__name__)
 
@@ -193,11 +194,13 @@ def delete_resource(
         )
     elif not is_admin:
         try:
-            require_resource_access(current_user, db_resource.user_id)
+            require_resource_management(
+                session=session, user=current_user, vmid=vmid
+            )
         except PermissionDeniedError:
             logger.warning(
-                "User %s attempted to delete resource %s owned by %s",
-                current_user.email, vmid, db_resource.user_id,
+                "User %s attempted to delete resource %s without management rights",
+                current_user.email, vmid,
             )
             raise
 
@@ -285,7 +288,7 @@ def get_ssh_key(
     _current_user: CurrentUser,
     _resource_info: ResourceInfoDep,
 ):
-    """取得資源的 SSH 金鑰（包含私鑰，僅限資源擁有者或管理員）"""
+    """取得資源的登入憑證（SSH 私鑰與初始密碼，僅限資源擁有者或管理員）"""
     db_resource = resource_repo.get_resource_by_vmid(session=session, vmid=vmid)
     if not db_resource:
         raise ProxmoxError("Resource not found in database")
@@ -293,9 +296,13 @@ def get_ssh_key(
     private_key: str | None = None
     if db_resource.ssh_private_key_encrypted:
         private_key = decrypt_value(db_resource.ssh_private_key_encrypted)
+    login_password: str | None = None
+    if db_resource.login_password_encrypted:
+        login_password = decrypt_value(db_resource.login_password_encrypted)
 
     return SSHKeyResponse(
         vmid=vmid,
         ssh_public_key=db_resource.ssh_public_key,
         ssh_private_key=private_key,
+        login_password=login_password,
     )

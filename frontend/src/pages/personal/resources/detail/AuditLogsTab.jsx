@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import styles from "./ResourceDetailPage.module.scss";
+import LoadingState from "../../../../components/LoadingState/LoadingState";
+import EmptyState from "../../../../components/EmptyState/EmptyState";
 import { AuditLogsService } from "../../../../services/auditLogs";
 
 /** 依動作類型決定 badge 色系（僅使用四種語意色） */
@@ -24,7 +26,7 @@ export default function AuditLogsTab({ vmid }) {
   }, [vmid]);
 
   if (error) return <p className={styles.stateText}>無法載入操作紀錄</p>;
-  if (!logs) return <p className={styles.stateText}>載入中…</p>;
+  if (!logs) return <LoadingState />;
 
   return (
     <div className={styles.tabStack}>
@@ -36,7 +38,7 @@ export default function AuditLogsTab({ vmid }) {
           </div>
         </div>
         {logs.data.length === 0 ? (
-          <p className={styles.stateText}>尚無紀錄</p>
+          <EmptyState icon="receipt_long" title="尚無紀錄" />
         ) : (
           <table className={styles.table}>
             <thead>
@@ -56,7 +58,7 @@ export default function AuditLogsTab({ vmid }) {
                   <td className={styles.td}>
                     <div className={styles.userCell}>
                       <span className={styles.userName}>
-                        {log.user_full_name || "Unknown"}
+                        {log.user_full_name || log.user_email || "系統"}
                       </span>
                       <span className={styles.userEmail}>{log.user_email}</span>
                     </div>

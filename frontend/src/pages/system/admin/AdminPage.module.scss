@@ -7,36 +7,9 @@
   padding: $spacing-8 $spacing-16;
   flex: 1;
 
-  @include respond-to(md) {
+  @media (min-width: $breakpoint-sidebar) {
     padding: 0;
   }
-}
-
-.pageHeader {
-  @include flex-between;
-  flex-wrap: wrap;
-  gap: $spacing-16;
-  align-items: center;
-}
-
-.pageHeading {
-  @include flex-column;
-  gap: $spacing-4;
-}
-
-.pageTitle {
-  font-size: $font-size-24;
-  font-weight: $font-weight-700;
-  color: var(--color-text-primary);
-
-  @include respond-to(sm) {
-    font-size: $font-size-28;
-  }
-}
-
-.pageSubtitle {
-  font-size: $font-size-14;
-  color: var(--color-text-secondary);
 }
 
 .btnPrimary,
@@ -83,7 +56,7 @@
 
 .btnDanger {
   background: var(--color-danger);
-  color: #fff;
+  color: var(--color-text-on-primary);
 
   &:hover:not(:disabled) {
     box-shadow: var(--shadow-sm);
@@ -158,44 +131,6 @@
 .content {
   flex: 1;
   @include flex-column;
-}
-
-.loading {
-  padding: $spacing-32;
-  color: var(--color-text-secondary);
-  text-align: center;
-}
-
-.empty {
-  flex: 1;
-  @include flex-column;
-  align-items: center;
-  justify-content: center;
-  gap: $spacing-16;
-  padding: $spacing-48 $spacing-16;
-  text-align: center;
-}
-
-.emptyIcon {
-  width: 72px;
-  height: 72px;
-  border-radius: $radius-16;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  @include flex-center;
-}
-
-.emptyTitle {
-  font-size: $font-size-18;
-  font-weight: $font-weight-700;
-  color: var(--color-text-primary);
-}
-
-.emptyDesc {
-  font-size: $font-size-14;
-  color: var(--color-text-secondary);
-  max-width: 360px;
-  line-height: $line-height-base;
 }
 
 .list {
@@ -335,21 +270,40 @@
 .modalOverlay {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 300;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: $spacing-16;
   background: rgba(15, 23, 42, 0.42);
+  animation: fadeIn 0.15s ease;
+  transition: opacity 0.15s ease;
+}
+
+.modalOverlayOut {
+  animation: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .modal,
 .confirm {
+  animation: slideUp 0.18s cubic-bezier(0.25, 0.8, 0.25, 1);
   width: min(640px, 100%);
   @include flex-column;
   gap: $spacing-16;
   padding: $spacing-24;
-  @include glass-surface($shadow: var(--shadow-xl));
+  @include glass-surface($shadow: var(--shadow-lg));
   border-radius: $radius-8;
 }
 

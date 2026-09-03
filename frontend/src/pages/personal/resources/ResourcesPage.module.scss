@@ -8,38 +8,12 @@
   padding: $spacing-8 $spacing-16;
   flex: 1;
 
-  @include respond-to(md) {
+  @media (min-width: $breakpoint-sidebar) {
     padding: 0;
   }
 }
 
 /* ── Header ── */
-.pageHeader {
-  @include flex-between;
-  flex-wrap: wrap;
-  gap: $spacing-16;
-}
-
-.pageHeading {
-  @include flex-column;
-  gap: $spacing-4;
-}
-
-.pageTitle {
-  font-size: $font-size-24;
-  font-weight: $font-weight-700;
-  color: var(--color-text-primary);
-
-  @include respond-to(sm) {
-    font-size: $font-size-28;
-  }
-}
-
-.pageSubtitle {
-  font-size: $font-size-14;
-  color: var(--color-text-secondary);
-}
-
 .pageActions {
   display: flex;
   align-items: center;
@@ -89,56 +63,135 @@
   @include flex-column;
 }
 
-/* ── Empty state ── */
-.empty {
-  flex: 1;
-  @include flex-column;
-  align-items: center;
-  justify-content: center;
-  gap: $spacing-16;
-  padding: $spacing-48 $spacing-16;
-  text-align: center;
-}
-
-.emptyIcon {
-  width: 72px;
-  height: 72px;
-  border-radius: $radius-16;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  @include flex-center;
-}
-
-.emptyTitle {
-  font-size: $font-size-18;
-  font-weight: $font-weight-700;
-  color: var(--color-text-primary);
-}
-
-.emptyDesc {
-  font-size: $font-size-14;
-  color: var(--color-text-primary);
-  max-width: 320px;
-  line-height: $line-height-base;
-}
-
-.emptyBtn {
-  @extend %btn-base;
-  background: var(--color-primary);
-  color: var(--color-text-on-primary);
-  margin-top: $spacing-8;
-
-  &:hover {
-    background: var(--color-primary-dark);
-  }
-}
-
 /* ── Resource grid ── */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: $spacing-16;
 }
+
+/* ── Resource list ── */
+.tableWrap {
+  @include table-wrap;
+}
+
+/* 欄寬由 <colgroup> 固定。auto layout 會依內容重算每一欄，
+   展開群組時多出的動作按鈕（終端機／啟動）會讓整張表的欄寬跳動，
+   所以改成 fixed；名稱欄不指定寬度，吸收剩下的空間。 */
+.table {
+  @include table-base;
+  table-layout: fixed;
+  min-width: 1080px;
+}
+
+.colEnv     { width: 160px; }
+.colStatus  { width: 100px; }
+.colIp      { width: 130px; }
+.colExpiry  { width: 150px; }
+.colNode    { width: 80px; }
+.colActions { width: 220px; }
+
+.th {
+  @include table-th;
+}
+
+.tr {
+  @include table-tr;
+}
+
+.td {
+  @include table-td;
+
+  .badge {
+    margin-left: 0;
+  }
+}
+
+.nameCell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: $spacing-16;
+
+  > div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  strong, .nameLink {
+    overflow: hidden;
+    color: var(--color-text-primary);
+    font-size: $font-size-14;
+    font-weight: $font-weight-500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  small {
+    color: var(--color-text-muted);
+    font-size: $font-size-12;
+  }
+}
+
+.nameLink {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+}
+
+.envPrimary { color: var(--color-text-primary); font-size: $font-size-14; }
+.envSub, .muted { color: var(--color-text-muted); font-size: $font-size-12; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: $font-size-12; }
+/* 動作欄寬度固定，按鈕不換行也不壓縮，避免內容多寡影響版面。 */
+.rowActions { display: flex; align-items: center; gap: $spacing-8; flex-wrap: nowrap; > * { flex-shrink: 0; } }
+.pendingRow { background: color-mix(in srgb, var(--color-info) 4%, var(--color-surface)); }
+
+/* 群組列整列可開合，是這張表唯一可點的列。
+   hover 用比自身底色更深的主色調，和不可點的一般列（完全沒有 hover）明確區分；
+   游標與 hover 一起給，兩者不會各自漂移。 */
+.environmentGroupRow {
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+  cursor: pointer;
+
+  &:hover {
+    background: color-mix(in srgb, var(--color-primary) 13%, var(--color-surface));
+  }
+}
+
+.environmentMachineRow { background: var(--color-surface); }
+
+.environmentToggle {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: $spacing-8;
+  padding: 0;
+  border: 0;
+  color: var(--color-text-primary);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+
+  > :first-child { flex: 0 0 auto; color: var(--color-text-muted); }
+  > span:last-child { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+  strong { overflow: hidden; font-size: $font-size-14; font-weight: $font-weight-500; text-overflow: ellipsis; white-space: nowrap; }
+  small { color: var(--color-text-muted); font-size: $font-size-12; }
+}
+
+.environmentMachineName { padding-left: $spacing-24; }
+/* 拿掉機器列圖示後，階層全靠這個字元表達，顏色要看得見。 */
+.machineBranch { color: var(--color-text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: $font-size-18; }
+.environmentTiming { color: var(--color-primary); font-size: $font-size-12; font-weight: $font-weight-500; white-space: nowrap; }
 
 /* ── Resource card ── */
 .card {
@@ -245,12 +298,12 @@
   cursor: pointer;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
-  color: #dc3545;
+  color: var(--color-danger);
   transition: background $transition-base, border-color $transition-base;
 
   &:hover:not(:disabled) {
-    background: color-mix(in srgb, #dc3545 8%, transparent);
-    border-color: color-mix(in srgb, #dc3545 40%, var(--color-border));
+    background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+    border-color: color-mix(in srgb, var(--color-danger) 40%, var(--color-border));
   }
 
   &:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -265,10 +318,9 @@
 }
 
 .badge_success { background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success); }
-.badge_warning { background: var(--color-hover); color: var(--color-text-muted); }
 .badge_danger  { background: color-mix(in srgb, var(--color-danger)  12%, transparent); color: var(--color-danger); }
 .badge_info    { background: color-mix(in srgb, var(--color-info)    12%, transparent); color: var(--color-info); }
-.badge_muted   { background: color-mix(in srgb, var(--color-status-neutral) 12%, transparent); color: var(--color-status-neutral); }
+.badge_muted   { background: var(--color-hover); color: var(--color-status-neutral); }
 
 /* ── Type / VMID chips ── */
 .cardChips {
@@ -356,6 +408,7 @@
 }
 
 /* ── Terminal / Console button ── */
+.groupActions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .terminalBtn {
   display: inline-flex;
   align-items: center;
@@ -381,9 +434,11 @@
   gap: $spacing-8;
 }
 
-/* ── ⋮ Menu ── */
+/* ── ⋮ Menu ──
+   選單本體是 components/PowerMenu，portal 到 body 後自行以 fixed 定位，
+   不吃這裡的定位脈絡（.card 的 backdrop-filter / hover transform 會困住 absolute 選單） */
 .menuWrap {
-  position: relative;
+  display: flex;
 }
 
 .menuBtn {
@@ -402,68 +457,6 @@
 .menuBtnActive {
   background: var(--color-hover);
   color: var(--color-text);
-}
-
-/* ── Power dropdown ── */
-.powerMenu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  right: 0;
-  width: 240px;
-  @include glass-surface($shadow: var(--shadow-md));
-  border-radius: $radius-12;
-  padding: $spacing-8 0;
-  z-index: 50;
-  animation: slideUp 0.14s cubic-bezier(0.25, 0.8, 0.25, 1);
-  opacity: 1;
-  transform: translateY(0);
-  transition: opacity 0.12s ease, transform 0.12s ease;
-}
-
-.powerMenuOut {
-  animation: none;
-  opacity: 0;
-  transform: translateY(6px);
-  pointer-events: none;
-}
-
-.powerMenuTitle {
-  font-size: $font-size-12;
-  font-weight: $font-weight-500;
-  color: var(--color-text-muted);
-  padding: 2px $spacing-16 $spacing-8;
-}
-
-.powerMenuGrid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px;
-  padding: 0 $spacing-8;
-}
-
-.powerMenuItem {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px $spacing-8;
-  font-size: $font-size-12;
-  color: var(--color-text);
-  text-align: left;
-  border-radius: $radius-8;
-  transition: background $transition-base;
-
-  &:hover:not(:disabled) { background: var(--color-hover); }
-  &:disabled { opacity: 0.35; cursor: not-allowed; }
-}
-
-.powerMenuItemWarn {
-  color: #dc3545;
-  &:hover:not(:disabled) { background: color-mix(in srgb, #dc3545 8%, transparent); }
-}
-
-.powerMenuItemDanger {
-  color: #dc3545;
-  &:hover:not(:disabled) { background: color-mix(in srgb, #dc3545 8%, transparent); }
 }
 
 /* ── Power action buttons (legacy, kept for skeleton) ── */
@@ -491,24 +484,24 @@
 }
 
 .powerBtnStart {
-  background: color-mix(in srgb, #28a745 10%, transparent);
-  color: #28a745;
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+  color: var(--color-success);
 
   &:hover:not(:disabled) {
-    background: color-mix(in srgb, #28a745 10%, var(--color-border));
-    color: #28a745;
-    border-color: #28a745;
+    background: color-mix(in srgb, var(--color-success) 10%, var(--color-border));
+    color: var(--color-success);
+    border-color: var(--color-success);
   }
 }
 
 .powerBtnStop {
-  color: #dc3545;
-  border-color: color-mix(in srgb, #dc3545 30%, var(--color-border));
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 30%, var(--color-border));
 
   &:hover:not(:disabled) {
-    background: color-mix(in srgb, #dc3545 10%, transparent);
-    color: #dc3545;
-    border-color: #dc3545;
+    background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+    color: var(--color-danger);
+    border-color: var(--color-danger);
   }
 }
 
@@ -525,22 +518,18 @@
   white-space: nowrap;
   border: 1px solid var(--color-border);
   transition: background $transition-base, border-color $transition-base;
-  background: color-mix(in srgb, #dc3545 80%, var(--color-border));
+  background: color-mix(in srgb, var(--color-danger) 80%, var(--color-border));
   color: var(--color-text-on-primary);
-  border-color: color-mix(in srgb, #dc3545 80%, var(--color-border));
+  border-color: color-mix(in srgb, var(--color-danger) 80%, var(--color-border));
 
   &:hover {
-    background: color-mix(in srgb, #dc3545 12%, transparent);
-    color: color-mix(in srgb, #dc3545 80%, var(--color-border));
-    border-color: color-mix(in srgb, #dc3545 40%, var(--color-border));
+    background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+    color: color-mix(in srgb, var(--color-danger) 80%, var(--color-border));
+    border-color: color-mix(in srgb, var(--color-danger) 40%, var(--color-border));
   }
 }
 
 /* ── Empty error tint ── */
-.emptyIconError {
-  color: #dc3545;
-  background: color-mix(in srgb, #dc3545 8%, transparent);
-}
 
 /* ── Skeleton ── */
 @keyframes shimmer {
@@ -569,7 +558,7 @@
   position: fixed;
   inset: 0;
   background: var(--color-overlay);
-  z-index: 200;
+  z-index: 300;
   @include flex-center;
   padding: $spacing-16;
   backdrop-filter: blur(4px);
@@ -626,11 +615,11 @@
   font-weight: $font-weight-500;
   cursor: pointer;
   white-space: nowrap;
-  background: #dc3545;
-  color: #fff;
-  border: 1px solid #dc3545;
+  background: var(--color-danger);
+  color: var(--color-text-on-primary);
+  border: 1px solid var(--color-danger);
   transition: background $transition-base;
 
-  &:hover:not(:disabled) { background: #b91c1c; border-color: #b91c1c; }
+  &:hover:not(:disabled) { background: var(--color-danger-dark); border-color: var(--color-danger-dark); }
   &:disabled { opacity: 0.5; cursor: not-allowed; }
 }

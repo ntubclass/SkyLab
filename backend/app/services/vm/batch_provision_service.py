@@ -3,22 +3,35 @@
 import json
 import logging
 import re
+import secrets
 import threading
 import uuid
 from datetime import date
 
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from app.core.db import engine
 from app.exceptions import BadRequestError
-from app.models import VMTemplateStatus
-from app.models.batch_provision import BatchProvisionJobStatus, BatchProvisionTask
+from app.models import (
+    ClassCapacityReservation,
+    TeachingClass,
+    TeachingClassMachineNode,
+    TeachingClassStatus,
+    TeachingClassStudent,
+    TeachingClassStudentMachine,
+    VMTemplateStatus,
+)
+from app.models.batch_provision import (
+    BatchProvisionJob,
+    BatchProvisionJobStatus,
+    BatchProvisionTask,
+)
 from app.repositories import batch_provision as bp_repo
-from app.repositories import group as group_repo
+from app.repositories import resource as resource_repo
 from app.repositories import vm_template as vm_template_repo
 from app.schemas import LXCCreateRequest, VMCreateRequest
 from app.services.network import ip_management_service
-from app.services.proxmox import provisioning_service
+from app.services.proxmox import provisioning_service, proxmox_service
 from app.services.resource import quota_service
 from app.services.template import clone_service
 
@@ -28,29 +41,23 @@ logger = logging.getLogger(__name__)
 # ─── 公開 API ─────────────────────────────────────────────────────────────────
 
 
-def submit_batch_job(
+def submit_batch_job_for_users(
     *,
     session: Session,
-    group_id: uuid.UUID,
+    member_user_ids: list[uuid.UUID],
     initiated_by_id: uuid.UUID,
     resource_type: str,
     hostname_prefix: str,
     params: dict,
+    teaching_class_id: uuid.UUID,
     recurrence_rule: str | None = None,
     recurrence_duration_minutes: int | None = None,
     schedule_timezone: str | None = None,
+    capacity_reserved: bool = False,
 ) -> uuid.UUID:
-    """Create a BatchProvisionJob in ``pending_review`` state.
-
-    The job (and its per-member tasks) are persisted but no provisioning is
-    started — an admin must call :func:`approve_batch_job` first.
-
-    Validates that the IP subnet is configured and that there is enough free
-    capacity for every group member before persisting anything.
-    """
-    member_rows = group_repo.get_member_rows(session=session, group_id=group_id)
-    if not member_rows:
-        raise BadRequestError("群組沒有成員，無法執行批量建立")
+    """Create a reviewed batch for an explicit class-student roster."""
+    if not member_user_ids:
+        raise BadRequestError("班級沒有學生，無法執行批量建立")
 
     # 範本系統 2.0：指定 vm_template_id 時走克隆路徑，範本必須存在且 ready
     if params.get("vm_template_id"):
@@ -66,13 +73,11 @@ def submit_batch_job(
 
     # 檢查可用 IP 是否足夠
     stats = ip_management_service.get_ip_stats(session)
-    if stats["available"] < len(member_rows):
+    if not capacity_reserved and stats["available"] < len(member_user_ids):
         raise BadRequestError(
-            f"可用 IP 不足：需要 {len(member_rows)} 個，"
+            f"可用 IP 不足：需要 {len(member_user_ids)} 個，"
             f"但僅剩 {stats['available']} 個可用"
         )
-
-    member_user_ids = [row.user_id for row in member_rows]
 
     if recurrence_rule and not recurrence_duration_minutes:
         raise BadRequestError(
@@ -81,7 +86,7 @@ def submit_batch_job(
 
     job = bp_repo.create_job(
         session=session,
-        group_id=group_id,
+        teaching_class_id=teaching_class_id,
         initiated_by=initiated_by_id,
         resource_type=resource_type,
         hostname_prefix=hostname_prefix,
@@ -95,7 +100,10 @@ def submit_batch_job(
 
     logger.info(
         "Batch provision job %s submitted (pending_review): %d members, type=%s prefix=%s",
-        job.id, len(member_user_ids), resource_type, hostname_prefix,
+        job.id,
+        len(member_user_ids),
+        resource_type,
+        hostname_prefix,
     )
     return job.id
 
@@ -171,29 +179,44 @@ def reject_batch_job(
     logger.info("Batch provision job %s rejected by %s", job_id, reviewer_id)
 
 
-# Backwards-compat shim — older callers still pass through ``start_batch_job``.
-# The scheduling feature wraps batches in a review step; immediate provisioning
-# is no longer the default but can be opted into for non-recurring jobs that
-# bypass review (e.g. a future "instant batch" admin tool).
-def start_batch_job(
+def review_batch_jobs(
     *,
     session: Session,
-    group_id: uuid.UUID,
-    initiated_by_id: uuid.UUID,
-    resource_type: str,
-    hostname_prefix: str,
-    params: dict,
-    **schedule_kwargs,
-) -> uuid.UUID:
-    return submit_batch_job(
+    job_ids: list[uuid.UUID],
+    reviewer_id: uuid.UUID,
+    decision: BatchProvisionJobStatus,
+    review_comment: str | None = None,
+) -> list[BatchProvisionJob]:
+    """Review all current jobs of a class as one atomic decision."""
+    if not job_ids:
+        raise BadRequestError("Teaching class has no pending batch jobs")
+    jobs = bp_repo.transition_pending_reviews(
         session=session,
-        group_id=group_id,
-        initiated_by_id=initiated_by_id,
-        resource_type=resource_type,
-        hostname_prefix=hostname_prefix,
-        params=params,
-        **schedule_kwargs,
+        job_ids=job_ids,
+        reviewer_id=reviewer_id,
+        decision=decision,
+        review_comment=review_comment,
     )
+    if len(jobs) != len(set(job_ids)):
+        raise BadRequestError(
+            "Teaching class jobs are no longer all pending review."
+        )
+    if decision == BatchProvisionJobStatus.approved:
+        for job in jobs:
+            thread = threading.Thread(
+                target=_run_queue,
+                args=(job.id,),
+                daemon=True,
+                name=f"batch-provision-{job.id}",
+            )
+            thread.start()
+    logger.info(
+        "Teaching class batch jobs %s reviewed as %s by %s",
+        ",".join(str(job.id) for job in jobs),
+        decision.value,
+        reviewer_id,
+    )
+    return jobs
 
 
 # ─── 背景排隊執行 ──────────────────────────────────────────────────────────────
@@ -202,11 +225,10 @@ def start_batch_job(
 def _run_queue(job_id: uuid.UUID) -> None:
     """背景執行緒：逐一建立每個成員的資源。"""
     with Session(engine) as session:
-        bp_repo.update_job_status(
-            session=session,
-            job_id=job_id,
-            status=BatchProvisionJobStatus.running,
-        )
+        if not bp_repo.transition_job_to_running(
+            session=session, job_id=job_id
+        ):
+            return
 
     with Session(engine) as session:
         tasks = bp_repo.get_pending_tasks(session=session, job_id=job_id)
@@ -219,6 +241,8 @@ def _run_queue(job_id: uuid.UUID) -> None:
         job = bp_repo.get_job(session=session, job_id=job_id)
         if job is None:
             return
+        if job.status == BatchProvisionJobStatus.cancelled:
+            return
         final = (
             BatchProvisionJobStatus.failed
             if job.failed_count > 0 and job.done == 0
@@ -227,7 +251,9 @@ def _run_queue(job_id: uuid.UUID) -> None:
         bp_repo.update_job_status(session=session, job_id=job_id, status=final)
         logger.info(
             "Batch provision job %s finished: done=%d failed=%d",
-            job_id, job.done, job.failed_count,
+            job_id,
+            job.done,
+            job.failed_count,
         )
 
 
@@ -245,8 +271,26 @@ def _process_task(*, job_id: uuid.UUID, task_id: uuid.UUID) -> None:
         member_index = task.member_index
         user_id = task.user_id
         resource_type = job.resource_type
+        teaching_class_id = job.teaching_class_id
         hostname = _build_hostname(job.hostname_prefix, member_index)
         start_on_create = job.recurrence_rule is None
+        teaching_class = session.get(TeachingClass, teaching_class_id)
+        class_archived = (
+            teaching_class is None
+            or teaching_class.status == TeachingClassStatus.archived
+        )
+        job_cancelled = job.status == BatchProvisionJobStatus.cancelled
+        initiated_by_id = job.initiated_by
+
+    if class_archived or job_cancelled:
+        with Session(engine) as session:
+            bp_repo.update_task_failed(
+                session=session,
+                task_id=task_id,
+                error="Teaching class is archived or provisioning was cancelled",
+            )
+            bp_repo.increment_job_failed(session=session, job_id=job_id)
+        return
 
     with Session(engine) as session:
         bp_repo.update_task_running(session=session, task_id=task_id)
@@ -261,27 +305,126 @@ def _process_task(*, job_id: uuid.UUID, task_id: uuid.UUID) -> None:
                 params=params,
                 start=start_on_create,
                 batch_job_id=job_id,
+                teaching_class_id=teaching_class_id,
             )
 
         # E1：批量建立完成點也建初始快照（best-effort）
-        from app.services.resource import reset_service  # noqa: PLC0415
+        with Session(engine) as session:
+            resource = resource_repo.assign_to_teaching_class(
+                session=session,
+                vmid=vmid,
+                teaching_class_id=teaching_class_id,
+            )
+            if resource is None:
+                raise RuntimeError(
+                    f"Provisioned class resource {vmid} has no database record"
+                )
+            teaching_class = session.get(TeachingClass, teaching_class_id)
+            if (
+                teaching_class is None
+                or teaching_class.status == TeachingClassStatus.archived
+            ):
+                resource_info = proxmox_service.find_resource(vmid)
+                from app.services.resource import resource_service  # noqa: PLC0415
 
-        reset_service.ensure_init_snapshot(vmid)
+                resource_service.delete(
+                    session=session,
+                    vmid=vmid,
+                    resource_info=resource_info,
+                    user_id=initiated_by_id,
+                    purge=True,
+                    force=True,
+                )
+                raise RuntimeError(
+                    "Teaching class was archived while resource was provisioning"
+                )
+
+        # Snapshot failure must not turn a successfully created resource into
+        # a failed task, otherwise retrying can create a duplicate machine.
+        try:
+            from app.services.resource import reset_service  # noqa: PLC0415
+
+            reset_service.ensure_init_snapshot(vmid)
+        except Exception:
+            logger.warning("Initial snapshot failed for class vmid=%s", vmid)
 
         with Session(engine) as session:
             bp_repo.update_task_done(session=session, task_id=task_id, vmid=vmid)
+            _sync_class_machine_mapping(
+                session=session,
+                job_id=job_id,
+                task_id=task_id,
+                user_id=user_id,
+                vmid=vmid,
+                status="completed",
+            )
             bp_repo.increment_job_done(session=session, job_id=job_id)
 
         logger.info("Batch task %s done: vmid=%d user=%s", task_id, vmid, user_id)
 
-    except Exception as exc:
-        error_msg = str(exc)[:500]
+    except Exception:
+        logger.exception("Batch task failed task=%s user=%s", task_id, user_id)
+        error_msg = "Provisioning failed. Retry or contact an administrator."
         with Session(engine) as session:
             bp_repo.update_task_failed(
                 session=session, task_id=task_id, error=error_msg
             )
+            _sync_class_machine_mapping(
+                session=session,
+                job_id=job_id,
+                task_id=task_id,
+                user_id=user_id,
+                vmid=None,
+                status="failed",
+                error=error_msg,
+            )
             bp_repo.increment_job_failed(session=session, job_id=job_id)
-        logger.error("Batch task %s failed user=%s: %s", task_id, user_id, error_msg)
+
+
+def _sync_class_machine_mapping(
+    *,
+    session: Session,
+    job_id: uuid.UUID,
+    task_id: uuid.UUID,
+    user_id: uuid.UUID,
+    vmid: int | None,
+    status: str,
+    error: str | None = None,
+) -> None:
+    """Persist the class-to-student machine grant as soon as provisioning ends."""
+    job = session.get(BatchProvisionJob, job_id)
+    if job is None:
+        return
+    node = session.exec(
+        select(TeachingClassMachineNode).where(
+            TeachingClassMachineNode.batch_job_id == job_id
+        )
+    ).first()
+    enrollment = session.exec(
+        select(TeachingClassStudent).where(
+            TeachingClassStudent.class_id == job.teaching_class_id,
+            TeachingClassStudent.user_id == user_id,
+        )
+    ).first()
+    if node is None or enrollment is None:
+        return
+    mapping = session.exec(
+        select(TeachingClassStudentMachine).where(
+            TeachingClassStudentMachine.class_student_id == enrollment.id,
+            TeachingClassStudentMachine.machine_node_id == node.id,
+        )
+    ).first()
+    if mapping is None:
+        mapping = TeachingClassStudentMachine(
+            class_student_id=enrollment.id,
+            machine_node_id=node.id,
+        )
+    mapping.batch_task_id = task_id
+    mapping.vmid = vmid
+    mapping.status = status
+    mapping.error = error
+    session.add(mapping)
+    session.commit()
 
 
 def _provision_one(
@@ -293,20 +436,37 @@ def _provision_one(
     params: dict,
     start: bool = True,
     batch_job_id: uuid.UUID | None = None,
+    teaching_class_id: uuid.UUID | None = None,
 ) -> int:
     """建立單一資源，回傳 vmid。
 
     指定 ``vm_template_id`` 時走範本系統 2.0 統一克隆路徑
     （linked 優先退 full）；否則沿用 provisioning_service 舊路徑。
     """
-    quota_service.check_quota(
-        session,
-        user_id,
-        delta_cores=int(params.get("cores") or 0),
-        delta_memory_mb=int(params.get("memory") or 0),
-        delta_disk_gb=int(params.get("disk_size") or params.get("rootfs_size") or 0),
-        delta_instances=1,
-    )
+    # Formal classes use the administrator-approved whole-class capacity
+    # reservation and must not consume each student's personal quota.
+    if teaching_class_id is not None:
+        reservation = session.exec(
+            select(ClassCapacityReservation).where(
+                ClassCapacityReservation.class_id == teaching_class_id,
+                col(ClassCapacityReservation.status).in_(["reserved", "consumed"]),
+            )
+        ).first()
+        if reservation is None:
+            raise BadRequestError(
+                "Teaching class has no approved capacity reservation"
+            )
+    else:
+        quota_service.check_quota(
+            session,
+            user_id,
+            delta_cores=int(params.get("cores") or 0),
+            delta_memory_mb=int(params.get("memory") or 0),
+            delta_disk_gb=int(
+                params.get("disk_size") or params.get("rootfs_size") or 0
+            ),
+            delta_instances=1,
+        )
 
     if params.get("vm_template_id"):
         payload = {
@@ -320,6 +480,11 @@ def _provision_one(
             "batch_job_id": str(batch_job_id) if batch_job_id else None,
             "environment_type": params.get("environment_type", "批量建立"),
             "expiry_date": params.get("expiry_date"),
+            "ip_reservation_key": (
+                f"{params['ip_reservation_prefix']}:{user_id}"
+                if params.get("ip_reservation_prefix")
+                else None
+            ),
         }
         # 同步執行（batch 已在背景執行緒）；task_id 無對應 TaskRecord，
         # report_progress 會自動 no-op
@@ -327,29 +492,43 @@ def _provision_one(
         return int(clone_result["vmid"])
 
     if resource_type == "lxc":
+        reservation_key = (
+            f"{params['ip_reservation_prefix']}:{user_id}"
+            if params.get("ip_reservation_prefix")
+            else None
+        )
         req = LXCCreateRequest(
             hostname=hostname,
             ostemplate=params["ostemplate"],
             cores=params["cores"],
             memory=params["memory"],
             rootfs_size=params.get("rootfs_size", 8),
-            password=params["password"],
+            password=params.get("password") or secrets.token_urlsafe(18),
             storage=params.get("storage", "local-lvm"),
             environment_type=params.get("environment_type", "批量建立"),
             os_info=params.get("os_info"),
             expiry_date=_parse_date(params.get("expiry_date")),
             start=start,
-            unprivileged=True,
+            unprivileged=bool(params.get("unprivileged", True)),
         )
         result = provisioning_service.create_lxc(
-            session=session, lxc_data=req, user_id=user_id, batch_job_id=batch_job_id
+            session=session,
+            lxc_data=req,
+            user_id=user_id,
+            batch_job_id=batch_job_id,
+            ip_reservation_key=reservation_key,
         )
     else:
+        reservation_key = (
+            f"{params['ip_reservation_prefix']}:{user_id}"
+            if params.get("ip_reservation_prefix")
+            else None
+        )
         req = VMCreateRequest(
             hostname=hostname,
             template_id=params["template_id"],
-            username=params["username"],
-            password=params["password"],
+            username=params.get("username") or "student",
+            password=params.get("password") or secrets.token_urlsafe(18),
             cores=params["cores"],
             memory=params["memory"],
             disk_size=params.get("disk_size", 20),
@@ -360,7 +539,11 @@ def _provision_one(
             start=start,
         )
         result = provisioning_service.create_vm(
-            session=session, vm_data=req, user_id=user_id, batch_job_id=batch_job_id
+            session=session,
+            vm_data=req,
+            user_id=user_id,
+            batch_job_id=batch_job_id,
+            ip_reservation_key=reservation_key,
         )
 
     if result.vmid is None:

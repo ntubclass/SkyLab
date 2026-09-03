@@ -5,7 +5,7 @@ flag_hash，學生端與管理端讀取皆然。
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -22,11 +22,13 @@ from app.models.course import (
 class CoursePathCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
+    teaching_class_id: uuid.UUID | None = None
 
 
 class CoursePathUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
+    teaching_class_id: uuid.UUID | None = None
 
 
 class CoursePathPublish(BaseModel):
@@ -42,6 +44,8 @@ class CoursePathPublic(BaseModel):
     created_at: datetime
     updated_at: datetime
     room_count: int = 0
+    teaching_class_id: uuid.UUID | None = None
+    teaching_class_name: str | None = None
 
 
 # ── 管理端：房間 ────────────────────────────────────────────────────────────
@@ -146,6 +150,41 @@ class CoursePathSummary(BaseModel):
     progress_percent: float
 
 
+class CourseScheduleStudent(BaseModel):
+    """One real teaching-class session shown on the student's home page."""
+
+    id: uuid.UUID
+    title: str
+    description: str | None = None
+    room_count: int
+    total_questions: int
+    completed_questions: int
+    progress_percent: float
+    teaching_class_id: uuid.UUID
+    teaching_class_name: str
+    session_date: date
+    start_at: datetime
+    end_at: datetime
+    teacher: str
+    location: str | None = None
+    state: Literal["now", "later", "available", "ended"]
+    label: str
+
+
+class CourseReminderStudent(BaseModel):
+    """Derived reminder; read state remains a per-browser UI preference."""
+
+    id: str
+    kind: Literal["resource_expiry", "request_review", "class_task"]
+    tone: Literal["warning", "success", "danger", "info"]
+    icon: str
+    title: str
+    description: str
+    time_label: str
+    target: str
+    occurred_at: datetime
+
+
 class CourseRoomSummary(BaseModel):
     id: uuid.UUID
     title: str
@@ -181,6 +220,122 @@ class CourseTaskStudent(BaseModel):
     content: str
     order: int
     questions: list[CourseQuestionStudent]
+
+
+class CourseAITaskItemStudent(BaseModel):
+    """學生可見的 AI 評分要求；不包含命令、腳本與內部判分提示。"""
+
+    id: str
+    title: str
+    description: str = ""
+    detectable: Literal["auto", "partial", "manual"] = "manual"
+    order: int = 0
+
+
+class CourseAICheckItemStudent(BaseModel):
+    """AI Check 單一評分項目，僅包含學生需要的回饋。"""
+
+    item_id: str = ""
+    title: str = ""
+    status: str = "unknown"
+    score: int | None = None
+    max_score: int | None = None
+    comment: str = ""
+
+
+class CourseAICheckStudent(BaseModel):
+    """學生自己送出的 AI Check 狀態與安全化回饋。"""
+
+    run_id: uuid.UUID
+    status: Literal["pending", "running", "completed", "failed", "cancelled"]
+    submitted_at: datetime
+    finished_at: datetime | None = None
+    score: int | None = None
+    max_score: int | None = None
+    summary: str = ""
+    error: str = ""
+    items: list[CourseAICheckItemStudent] = Field(default_factory=list)
+
+
+class CourseAICheckSubmit(BaseModel):
+    """Optionally limit a student-triggered run to one displayed checkpoint."""
+
+    item_id: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class CourseAISourceDocumentStudent(BaseModel):
+    """學生可查看的老師任務文件；不公開內部檔案路徑。"""
+
+    filename: str
+    display_name: str
+    media_type: Literal["application/pdf"] = "application/pdf"
+
+
+class CourseAIAssignmentStudent(BaseModel):
+    """老師核准後，公開給所屬學生的 AI 評分任務。"""
+
+    id: uuid.UUID
+    teaching_class_id: uuid.UUID
+    teaching_class_name: str
+    session_id: uuid.UUID | None = None
+    teaching_class_week_id: uuid.UUID | None = None
+    title: str
+    summary: str = ""
+    template_key: str
+    version: int
+    approved_at: datetime | None = None
+    items: list[CourseAITaskItemStudent]
+    source_document: CourseAISourceDocumentStudent | None = None
+    latest_check: CourseAICheckStudent | None = None
+    checkpoint_checks: dict[str, CourseAICheckStudent] = Field(default_factory=dict)
+
+
+class CourseWeeklyTaskFileStudent(BaseModel):
+    """A teacher-provided PDF that an enrolled student may preview."""
+
+    id: uuid.UUID
+    filename: str
+    media_type: Literal["application/pdf"] = "application/pdf"
+
+
+class CourseWeeklyCheckpointStudent(BaseModel):
+    id: str
+    task_id: uuid.UUID
+    assignment_id: uuid.UUID | None = None
+    assignment_title: str
+    check_available: bool = False
+    title: str
+    description: str = ""
+    detectable: Literal["auto", "partial", "manual"] = "manual"
+    order: int = 0
+    latest_check: CourseAICheckStudent | None = None
+
+
+class CourseWeeklyTaskStudent(BaseModel):
+    """Published weekly content from the teaching class linked to a path."""
+
+    id: uuid.UUID
+    teaching_class_id: uuid.UUID
+    teaching_class_name: str
+    week_number: int
+    session_date: date
+    title: str
+    files: list[CourseWeeklyTaskFileStudent] = Field(default_factory=list)
+    checkpoints: list[CourseWeeklyCheckpointStudent] = Field(default_factory=list)
+
+
+class CoursePracticeMachineStudent(BaseModel):
+    """學生在該課程可直接操作的班級機器。"""
+
+    teaching_class_id: uuid.UUID
+    teaching_class_name: str
+    machine_node_id: uuid.UUID
+    node_key: str
+    name: str
+    role: str
+    resource_type: str
+    vmid: int | None = None
+    status: str
 
 
 DeploymentStatus = Literal["provisioning", "running", "failed", "expired"]
@@ -262,10 +417,22 @@ __all__ = [
     "CourseQuestionUpdate",
     "CourseQuestionPublic",
     "CoursePathSummary",
+    "CourseScheduleStudent",
+    "CourseReminderStudent",
     "CourseRoomSummary",
     "CoursePathDetail",
     "CourseQuestionStudent",
     "CourseTaskStudent",
+    "CourseAITaskItemStudent",
+    "CourseAICheckItemStudent",
+    "CourseAICheckStudent",
+    "CourseAICheckSubmit",
+    "CourseAISourceDocumentStudent",
+    "CourseAIAssignmentStudent",
+    "CourseWeeklyTaskFileStudent",
+    "CourseWeeklyCheckpointStudent",
+    "CourseWeeklyTaskStudent",
+    "CoursePracticeMachineStudent",
     "CourseDeploymentPublic",
     "CourseRoomStudentDetail",
     "CourseAnswerSubmit",

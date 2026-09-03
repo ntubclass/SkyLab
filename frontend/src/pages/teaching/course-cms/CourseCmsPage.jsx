@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import LoadingState from "../../../components/LoadingState/LoadingState";
+import EmptyState from "../../../components/EmptyState/EmptyState";
 import MIcon from "../../../components/MIcon";
 import { useAuth } from "../../../contexts/AuthContext";
+import { useConfirm } from "../../../components/ConfirmDialog/ConfirmProvider";
 import { useToast } from "../../../hooks/useToast";
 import { AuthStorage } from "../../../services/auth";
 import {
@@ -8,7 +12,9 @@ import {
   courseProgressWsUrl,
 } from "../../../services/courses";
 import { TemplatesService } from "../../../services/templates";
+import { TeachingClassesService } from "../../../services/teachingClasses";
 import styles from "./CourseCmsPage.module.scss";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 const DIFFICULTIES = [
   { key: "easy", label: "簡單" },
@@ -17,20 +23,41 @@ const DIFFICULTIES = [
 ];
 
 /* ══════════════ 路徑欄 ══════════════ */
-function PathColumn({ paths, selectedId, onSelect, onReload }) {
+function PathColumn({ paths, teachingClasses, selectedId, onSelect, onReload }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [title, setTitle] = useState("");
+  const [classId, setClassId] = useState("");
+  const selectedPath = paths.find((path) => path.id === selectedId);
+  const linkedClassIds = new Set(paths.map((path) => String(path.teaching_class_id ?? "")).filter(Boolean));
 
   async function handleCreate(e) {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim() || !classId) return;
     try {
-      await CourseAdminService.createPath({ title: title.trim() });
+      await CourseAdminService.createPath({
+        title: title.trim(),
+        teaching_class_id: classId,
+      });
       setTitle("");
+      setClassId("");
       onReload();
       toast.success("已建立路徑");
     } catch (err) {
       toast.error(err.message ?? "建立失敗");
+    }
+  }
+
+  async function handleClassLink(value) {
+    if (!selectedPath) return;
+    try {
+      await CourseAdminService.updatePath(selectedPath.id, {
+        teaching_class_id: value || null,
+      });
+      onReload();
+      toast.success(value ? "已連結正式班級" : "已解除班級連結");
+    } catch (err) {
+      toast.error(err.message ?? "連結失敗");
     }
   }
 
@@ -47,7 +74,13 @@ function PathColumn({ paths, selectedId, onSelect, onReload }) {
 
   async function handleDelete(path, e) {
     e.stopPropagation();
-    if (!window.confirm(`確定刪除路徑「${path.title}」？（房間與任務會一併刪除）`)) return;
+    const ok = await confirm({
+      title: "刪除學習路徑",
+      message: `確定刪除路徑「${path.title}」？（房間與任務會一併刪除）`,
+      confirmText: "刪除",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await CourseAdminService.deletePath(path.id);
       onReload();
@@ -72,7 +105,7 @@ function PathColumn({ paths, selectedId, onSelect, onReload }) {
               title={path.status === "published" ? "已發布" : "草稿"}
             />
             <span className={styles.itemLabel}>{path.title}</span>
-            <span className={styles.itemMeta}>{path.room_count} 房</span>
+            <span className={styles.itemMeta}>{path.teaching_class_name ?? `${path.room_count} 房`}</span>
             <button
               type="button"
               className={styles.iconBtn}
@@ -91,16 +124,43 @@ function PathColumn({ paths, selectedId, onSelect, onReload }) {
             </button>
           </div>
         ))}
-        {paths.length === 0 && <div className={styles.emptyHint}>尚無路徑</div>}
+        {paths.length === 0 && <EmptyState icon="topic" iconSize={24} title="尚無路徑" />}
       </div>
+      {selectedPath && (
+        <label className={styles.pathClassLink}>
+          <span>這份內容屬於哪個班級</span>
+          <select
+            value={selectedPath.teaching_class_id ?? ""}
+            onChange={(event) => handleClassLink(event.target.value)}
+          >
+            <option value="">尚未連結</option>
+            {teachingClasses.map((item) => (
+              <option
+                key={item.id}
+                value={item.id}
+                disabled={linkedClassIds.has(String(item.id)) && String(item.id) !== String(selectedPath.teaching_class_id)}
+              >
+                {item.name} · {item.term}
+              </option>
+            ))}
+          </select>
+          <small>連結後，學生首頁、課堂機器與 AI 任務才會對應到同一班。</small>
+        </label>
+      )}
       <form className={styles.addForm} onSubmit={handleCreate}>
+        <select value={classId} onChange={(event) => setClassId(event.target.value)} aria-label="選擇正式班級">
+          <option value="">先選擇班級</option>
+          {teachingClasses.filter((item) => !linkedClassIds.has(String(item.id))).map((item) => (
+            <option key={item.id} value={item.id}>{item.name} · {item.term}</option>
+          ))}
+        </select>
         <input
           className={styles.input}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="新路徑標題"
         />
-        <button type="submit" className={styles.addBtn} disabled={!title.trim()}>
+        <button type="submit" className={styles.addBtn} disabled={!title.trim() || !classId}>
           <MIcon name="add" size={16} />
         </button>
       </form>
@@ -111,6 +171,7 @@ function PathColumn({ paths, selectedId, onSelect, onReload }) {
 /* ══════════════ 房間欄 ══════════════ */
 function RoomColumn({ pathId, rooms, templates, selectedId, onSelect, onReload }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [form, setForm] = useState({ title: "", difficulty: "easy", template_id: "" });
 
   async function handleCreate(e) {
@@ -134,7 +195,13 @@ function RoomColumn({ pathId, rooms, templates, selectedId, onSelect, onReload }
 
   async function handleDelete(room, e) {
     e.stopPropagation();
-    if (!window.confirm(`確定刪除房間「${room.title}」？`)) return;
+    const ok = await confirm({
+      title: "刪除房間",
+      message: `確定刪除房間「${room.title}」？`,
+      confirmText: "刪除",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await CourseAdminService.deleteRoom(room.id);
       onReload();
@@ -169,7 +236,7 @@ function RoomColumn({ pathId, rooms, templates, selectedId, onSelect, onReload }
             </button>
           </div>
         ))}
-        {rooms.length === 0 && <div className={styles.emptyHint}>尚無房間</div>}
+        {rooms.length === 0 && <EmptyState icon="meeting_room" iconSize={24} title="尚無房間" />}
       </div>
       <form className={styles.addForm} onSubmit={handleCreate}>
         <input
@@ -210,6 +277,7 @@ function RoomColumn({ pathId, rooms, templates, selectedId, onSelect, onReload }
 /* ══════════════ 題目編輯 ══════════════ */
 function QuestionEditor({ taskId }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [questions, setQuestions] = useState([]);
   const [form, setForm] = useState({ prompt: "", question_type: "flag", flag: "", points: 10 });
 
@@ -246,7 +314,13 @@ function QuestionEditor({ taskId }) {
   }
 
   async function handleDelete(q) {
-    if (!window.confirm("確定刪除此題？學生完成記錄會一併刪除")) return;
+    const ok = await confirm({
+      title: "刪除題目",
+      message: "確定刪除此題？學生完成記錄會一併刪除",
+      confirmText: "刪除",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await CourseAdminService.deleteQuestion(q.id);
       reload();
@@ -311,6 +385,7 @@ function QuestionEditor({ taskId }) {
 /* ══════════════ 任務欄（含內容編輯與題目） ══════════════ */
 function TaskColumn({ roomId }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [tasks, setTasks] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [draft, setDraft] = useState({ title: "", content: "" });
@@ -369,7 +444,13 @@ function TaskColumn({ roomId }) {
 
   async function handleDelete(task, e) {
     e.stopPropagation();
-    if (!window.confirm(`確定刪除任務「${task.title}」？`)) return;
+    const ok = await confirm({
+      title: "刪除任務",
+      message: `確定刪除任務「${task.title}」？`,
+      confirmText: "刪除",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await CourseAdminService.deleteTask(task.id);
       reload();
@@ -400,7 +481,7 @@ function TaskColumn({ roomId }) {
               </button>
             </div>
           ))}
-          {tasks.length === 0 && <div className={styles.emptyHint}>尚無任務</div>}
+          {tasks.length === 0 && <EmptyState icon="playlist_add_check" iconSize={24} title="尚無任務" />}
           <form className={styles.addForm} onSubmit={handleCreate}>
             <input
               className={styles.input}
@@ -443,12 +524,16 @@ function TaskColumn({ roomId }) {
 }
 
 /* ══════════════ 進度監控 ══════════════ */
-function ProgressPanel({ paths }) {
-  const [pathId, setPathId] = useState("");
+function ProgressPanel({ paths, initialPathId = "" }) {
+  const [pathId, setPathId] = useState(initialPathId);
   const [report, setReport] = useState(null);
   const [live, setLive] = useState(false);
   const wsRef = useRef(null);
   const refetchTimer = useRef(null);
+
+  useEffect(() => {
+    if (initialPathId) setPathId(initialPathId);
+  }, [initialPathId]);
 
   const fetchReport = useCallback((id) => {
     CourseAdminService.getPathProgress(id).then(setReport).catch(() => {});
@@ -558,19 +643,33 @@ function ProgressPanel({ paths }) {
 /* ══════════════ 主頁 ══════════════ */
 export default function CourseCmsPage() {
   const { user } = useAuth();
-  const [tab, setTab] = useState("editor");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get("tab") === "progress" ? "progress" : "editor");
+  const [pathsLoading, setPathsLoading] = useState(true);
   const [paths, setPaths] = useState([]);
   const [rooms, setRooms] = useState([]);
   const [templates, setTemplates] = useState([]);
-  const [selectedPathId, setSelectedPathId] = useState(null);
+  const [teachingClasses, setTeachingClasses] = useState([]);
+  const [selectedPathId, setSelectedPathId] = useState(searchParams.get("pathId"));
   const [selectedRoomId, setSelectedRoomId] = useState(null);
 
   const canManage =
     user?.role === "admin" || user?.role === "teacher" || user?.is_superuser === true;
 
   const reloadPaths = useCallback(() => {
-    CourseAdminService.listPaths().then(setPaths).catch(() => {});
+    CourseAdminService.listPaths()
+      .then(setPaths)
+      .catch(() => {})
+      .finally(() => setPathsLoading(false));
   }, []);
+
+  function changeTab(nextTab) {
+    setTab(nextTab);
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", nextTab);
+    if (nextTab !== "progress") next.delete("pathId");
+    setSearchParams(next, { replace: true });
+  }
 
   const reloadRooms = useCallback(() => {
     if (!selectedPathId) {
@@ -593,6 +692,7 @@ export default function CourseCmsPage() {
     TemplatesService.list()
       .then((rows) => setTemplates(rows.filter((t) => t.status === "ready")))
       .catch(() => {});
+    TeachingClassesService.list().then(setTeachingClasses).catch(() => {});
   }, [canManage, reloadPaths]);
 
   useEffect(() => {
@@ -605,18 +705,12 @@ export default function CourseCmsPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>課程管理</h1>
-          <p className={styles.pageSubtitle}>
-            建立學習路徑 → 房間（綁定實驗模板）→ 任務與 Flag 題目，發布後學生即可學習
-          </p>
-        </div>
+      <PageHeader title="課程管理" subtitle="建立學習路徑 → 房間（綁定實驗模板）→ 任務與 Flag 題目，發布後學生即可學習">
         <div className={styles.tabs}>
           <button
             type="button"
             className={`${styles.tabBtn} ${tab === "editor" ? styles.tabActive : ""}`}
-            onClick={() => setTab("editor")}
+            onClick={() => changeTab("editor")}
           >
             <MIcon name="edit_note" size={16} />
             內容編輯
@@ -624,18 +718,21 @@ export default function CourseCmsPage() {
           <button
             type="button"
             className={`${styles.tabBtn} ${tab === "progress" ? styles.tabActive : ""}`}
-            onClick={() => setTab("progress")}
+            onClick={() => changeTab("progress")}
           >
             <MIcon name="insights" size={16} />
             學生進度
           </button>
         </div>
-      </div>
+      </PageHeader>
 
-      {tab === "editor" ? (
+      {pathsLoading ? (
+        <LoadingState fullPage />
+      ) : tab === "editor" ? (
         <div className={styles.editorLayout}>
           <PathColumn
             paths={paths}
+            teachingClasses={teachingClasses}
             selectedId={selectedPathId}
             onSelect={(id) => {
               setSelectedPathId(id);
@@ -659,7 +756,7 @@ export default function CourseCmsPage() {
           {selectedRoomId && <TaskColumn roomId={selectedRoomId} />}
         </div>
       ) : (
-        <ProgressPanel paths={paths} />
+        <ProgressPanel paths={paths} initialPathId={searchParams.get("pathId") ?? ""} />
       )}
     </div>
   );

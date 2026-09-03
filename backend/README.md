@@ -53,7 +53,10 @@ backend/
 | --- | --- |
 | `login.py` | 登入 / token 換發 / 刷新 |
 | `users.py` | 使用者 CRUD、密碼管理、個人資料 |
-| `groups.py` | 群組管理、CSV 匯入成員、寄發初始密碼 |
+| `teaching_classes.py` | 正式班級、課表、學生名單、機器配置與整班建置 |
+| `classroom.py` | 正式班級學生機器監看與教師廣播 |
+| `teacher_judge_*.py` | 班級 AI 評分表、受管檢查腳本與執行結果 |
+| `ai_pve_log.py` | 管理員專用的全站 AI PVE 維運助手 |
 | `vm.py` | VM 建立、VNC ticket、模板列舉 |
 | `lxc.py` | LXC 建立與終端機連線 |
 | `vm_requests.py` | VM 申請提交、可用性檢查、審核工作流 |
@@ -67,8 +70,7 @@ backend/
 | `ai_proxy.py` | OpenAI 相容文字 API allowlist（`/models`、`/chat/completions`、`/completions`、`/responses`）代理至受限 LiteLLM service key |
 | `spec_change_requests.py` | VM 規格變更申請與審核 |
 | `audit_logs.py` | 操作稽核紀錄查詢 |
-| `script_deploy.py` | 從 GitHub 自動化部署服務模板 |
-| `ai_template_recommendation` | 內嵌 AI 模板推薦 |
+| `ai_template_recommendation` | 內嵌 AI 規格建議 |
 
 WebSocket 端點（`app/main.py`）：
 
@@ -218,6 +220,6 @@ uv run prek run --all-files  # 手動執行
 ## 參考
 
 - 主專案：[`../README.md`](../README.md)
-- 開發指引：[`../development.md`](../development.md)
-- 部署指引：[`../deployment.md`](../deployment.md)
+- 開發指引：[`../docs/development.md`](../docs/development.md)
+- 部署指引：[`../docs/deployment.md`](../docs/deployment.md)
 - VM 放置邏輯：[`../placement.md`](../placement.md)

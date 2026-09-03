@@ -25,16 +25,18 @@ src/pages/personal/resources/
 
 ---
 
-## 在 SCSS Module 中引入共用樣式
+## 在 SCSS Module 中使用共用變數與 mixin
 
-每個 `.module.scss` 檔案最上方需加：
+`vite.config.js` 已透過 `css.preprocessorOptions.scss.additionalData` 對**所有** SCSS 檔全域注入：
 
 ```scss
-@use "../../../assets/styles/variables" as *;
-@use "../../../assets/styles/mixins" as *;
+@use "@/assets/styles/variables" as *;
+@use "@/assets/styles/mixins" as *;
 ```
 
-> 路徑依元件深度調整。引入後即可直接使用 `$spacing-*`、`$font-size-*`、`@include flex-center` 等。
+因此 `.module.scss` 內可直接使用 `$spacing-*`、`$font-size-*`、`@include flex-center` 等，**不需要（也不應）在檔案開頭手動再加 `@use variables / mixins`**——手動引入是冗餘的。舊檔殘留的手動引入無害，重構經過時順手移除即可。
+
+> 注意：全域注入僅涵蓋 `variables` 與 `mixins` 兩檔；`_themes.scss` 的顏色是 CSS 自訂屬性（`var(--color-*)`），本來就不需引入。
 
 ---
 
@@ -48,7 +50,7 @@ src/pages/personal/resources/
 
 ## 顏色系統
 
-**所有顏色一律使用 `_themes.scss` 中定義的 CSS 自訂屬性**，不可在元件 SCSS 內直接寫死 HEX 色碼（狀態色碼除外，見下方說明）。
+**所有顏色一律使用 `_themes.scss` 中定義的 CSS 自訂屬性**，不可在元件 SCSS 內直接寫死 HEX 色碼。狀態色也一律走 `--color-success` 等變數（僅下方明列的例外可寫死色碼）。
 
 ### 主要變數
 
@@ -70,8 +72,9 @@ src/pages/personal/resources/
 | 變數 | 用途 |
 |------|------|
 | `--color-primary` | 主色（藍紫） |
-| `--color-primary-dark` | 深色主色 |
+| `--color-primary-dark` | 深色主色（**僅作底色**，如 primary 按鈕 hover；深色模式仍為深色，當文字會不可讀）|
 | `--color-primary-light` | 淺色主色 |
+| `--color-primary-on-surface` | 品牌色**文字／邊框**用；亮暗兩色都達 AA。勿與 `--color-text-primary` 混淆（語序相反、兩者皆為藍色）|
 
 #### 文字
 | 變數 | 用途 |
@@ -88,6 +91,7 @@ src/pages/personal/resources/
 | `--color-border` | 一般邊框 |
 | `--color-divider` | 分隔線 |
 | `--color-hover` | Hover 背景 |
+| `--color-row-hover` | 表格列 hover 背景（比 `--color-hover` 深，避免與表頭同色） |
 | `--color-overlay` | Modal 遮罩 |
 
 #### 陰影
@@ -100,26 +104,34 @@ src/pages/personal/resources/
 
 ### 狀態色
 
-前端只使用以下四種語意顏色，**不使用黃色 / 橙色作為警示色**：
+前端使用以下五種語意顏色，**黃橙色僅限「待審核 / pending」語意，不作為警示色**——警示、錯誤一律紅色：
 
-| 變數 | 色碼 | 語意 | 使用情境 |
-|------|------|------|----------|
-| `--color-success` | `#28a745` | 🟢 正常 | 運行中、已連接、成功 |
-| `--color-info` | `#2b4d98` | 🔵 一般 | 進行中、審核中、說明 |
-| `--color-danger` | `#dc3545` | 🔴 危險 | 錯誤、失敗、危險操作 |
-| `--color-warning` | `#dc3545` | 🔴 同 danger | （等同 danger，已統一為紅色） |
-| —（灰色） | `--color-hover` / `--color-text-muted` | ⚫ 未啟用 | 已停止、已暫停、disabled |
+| 變數 | 亮色值 | 深色值 | 語意 | 使用情境 |
+|------|--------|--------|------|----------|
+| `--color-success` | `#28a745` | 同左 | 🟢 正常 | 運行中、已連接、成功 |
+| `--color-info` | `#2b4d98` | `#89a5e0` | 🔵 一般 | 進行中、說明、一般標記 |
+| `--color-pending` | `#d97706` | `#f59e0b` | 🟠 待審核 | 待審核、草稿、排程中、等待處理 |
+| `--color-danger` | `#dc3545` | 同左 | 🔴 危險 | 錯誤、失敗、危險操作 |
+| `--color-warning` | `#dc3545` | 同左 | 🔴 同 danger | （等同 danger，已統一為紅色） |
+| `--color-status-neutral` | `#6b7280` | `#9ca3af` | — | ⚫ 未啟用 | 已停止、已暫停、disabled |
 
-> **例外**：可用名額不足的日曆格（AvailabilityPanel `calendarDayLimited`）保留黃色 `#f59e0b`，因其屬視覺漸層語意，非 UI 警示色。
+危險操作的 hover 加深色用 `--color-danger-dark`（`#b91c1c`）。
+
+> **例外**：終端機式的內容面固定深色、不隨主題切換——VNC / xterm 畫面底（ConsoleDialog、Classroom 的 `#1e1e1e`）、任務 log 輸出區（Jobs `dialogOutput`），以及需要白底墊圖的透明 logo（`tplLogo` 的 `#fff`）。
+>
+> **例外**：Gateway 頁的類 VSCode 設定檔編輯器（`ConfigCodeEditor.module.scss`）整組寫死 vs-dark 色票（`#1e1e1e`、`#252526`、`#007acc` 等）與 13px/12px 字級，刻意不隨主題切換——外框需與 Monaco `theme="vs-dark"` 一致，模擬 VSCode 視窗本身即為獨立配色的容器。
 
 #### 狀態 Badge 的標準寫法
 
 ```scss
-.badge_success { background: color-mix(in srgb, #28a745 12%, transparent); color: #28a745; }
-.badge_info    { background: color-mix(in srgb, #2b4d98 12%, transparent); color: #2b4d98; }
-.badge_danger  { background: color-mix(in srgb, #dc3545 12%, transparent); color: #dc3545; }
-.badge_muted   { background: var(--color-hover); color: var(--color-text-muted); }
+.badge_success { background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success); }
+.badge_info    { background: color-mix(in srgb, var(--color-info)    12%, transparent); color: var(--color-info); }
+.badge_pending { background: color-mix(in srgb, var(--color-pending) 12%, transparent); color: var(--color-pending); }
+.badge_danger  { background: color-mix(in srgb, var(--color-danger)  12%, transparent); color: var(--color-danger); }
+.badge_muted   { background: var(--color-hover); color: var(--color-status-neutral); }
 ```
+
+> 一律用 `var(--color-*)`，不要把狀態色寫死成 HEX——深色模式的 info / pending 亮色值才吃得到。
 
 ---
 
@@ -135,9 +147,11 @@ $spacing-24: 24px  $spacing-32: 32px  $spacing-48: 48px
 ### 字體大小
 
 ```scss
-$font-size-12: 12px   $font-size-14: 14px   $font-size-16: 16px
+$font-size-10: 10px   $font-size-12: 12px   $font-size-14: 14px   $font-size-16: 16px
 $font-size-18: 18px   $font-size-24: 24px   $font-size-28: 28px   $font-size-32: 32px
 ```
+
+> `$font-size-10` **僅限資料密集區**（密集網格、卡片 meta 列）的次要標籤使用；一般內文、說明文字最小 `$font-size-12`。
 
 ### 字重
 
@@ -261,6 +275,27 @@ import MIcon from "../components/MIcon";
 
 ---
 
+## 頁面版面（Page Layout）
+
+**頁面根容器（`.page`）一律滿寬**：不設 `max-width`、不使用 `margin: 0 auto` 置中，讓內容吃滿 DashboardLayout 的內容區。全站頁面留白因此一致，寬螢幕下不會出現「某些頁置中留白、某些頁滿寬」的落差。
+
+標準寫法：
+
+```scss
+.page {
+  @include flex-column;
+  gap: $spacing-24;
+  padding: $spacing-8 $spacing-16;
+  flex: 1;
+
+  @include respond-to(md) { padding: 0; }
+}
+```
+
+> **例外**：表單型窄頁（如 `AccountSettingsPage` 的 `max-width: 640px`）可限制寬度——輸入欄位拉滿寬螢幕反而難用。這類例外限於「單欄表單」頁面，一般內容頁請維持滿寬。
+
+---
+
 ## 元件樣式慣例
 
 ### 卡片（Card）
@@ -276,7 +311,7 @@ import MIcon from "../components/MIcon";
 
 ### Dialog / Modal
 
-- Dialog 寬度：`max-width: 1100px`（一般）/ `1280px`（寬版，如 VNC）
+- Dialog 寬度四級：確認框／命名框 `max-width: 420px`；小型單欄表單 `max-width: 640px`；一般 `max-width: 1100px`；寬版（如 VNC）`1280px`
 - 高度：`height: 88vh`
 - 全螢幕：使用 `:fullscreen` 偽類，設 `max-width: 100%; height: 100%; border-radius: 0`
 - 遮罩：`position: fixed; inset: 0; background: var(--color-overlay); backdrop-filter: blur(4px); z-index: 300`
@@ -304,14 +339,85 @@ import MIcon from "../components/MIcon";
 
 // 危險按鈕
 .btnDanger {
-  background: #dc3545;
-  color: #fff;
-  border: 1px solid #dc3545;
-  &:hover:not(:disabled) { background: #b91c1c; }
+  background: var(--color-danger);
+  color: var(--color-text-on-primary);
+  border: 1px solid var(--color-danger);
+  &:hover:not(:disabled) { background: var(--color-danger-dark); }
 }
 ```
 
-> **規則**：所有按鈕 hover 都必須加 `:not(:disabled)`，disabled 狀態一律 `opacity: 0.4; cursor: not-allowed`。
+> **規則**：所有按鈕 hover 都必須加 `:not(:disabled)`，disabled 狀態一律 `opacity: 0.5; cursor: not-allowed`。
+
+### 表格（Table）
+
+列表頁表格一律使用 `_mixins.scss` 的表格 mixin 組，**不要在頁面內重抄整組樣式**：
+
+```scss
+.tableWrap { @include table-wrap; }        // 玻璃容器 + 圓角 + 橫向卷動
+.table     { @include table-base; min-width: 720px; }  // min-width 依內容自定，撐出卷動
+.th        { @include table-th; }
+.tr        { @include table-tr; }          // 基底不含 hover，見下方規則
+.td        { @include table-td; }
+```
+
+- 欄寬、對齊、特殊儲存格（`.thRight`、`.tdNowrap`…）等頁面差異寫在 `@include` 之後
+- RWD 行為統一為 **容器橫向卷動**（`table-wrap` 內建 `overflow-x: auto`），不做表格轉卡片
+- 表格嵌在既有卡片內時可只用 `table-base` / `table-th` / `table-tr` / `table-td`，省略外層 `table-wrap`
+
+#### 規則一：整列 hover 變色 = 這一列可以點
+
+整列 hover 變色是**互動訊號，不是裝飾**。列本身不可點（互動都在儲存格內的按鈕上）時，
+不要讓整列變色，否則是假的可點暗示。
+
+```scss
+.tr          { @include table-tr; }            // 不可點：只有分隔線，無 hover
+.trClickable { @include table-tr-clickable; }  // 可點：游標 + hover 一起給
+```
+
+- 判斷標準只有一個：**`<tr>` 自己有沒有 `onClick`**（或 `role` / `tabIndex`）
+- 同一張表可以混用（監控頁：節點列可點、VM 列不可點），所以用兩支 mixin 疊加，不用布林參數
+- 不要自己寫 `cursor: pointer` 或 `&:hover { background: … }`——游標與 hover 會各自漂移
+- 需要不同的 hover 色時（例如群組列本身已有底色），可在 `@include` 之後覆寫 `background`
+
+#### 規則二：列數會變的表格要固定欄寬
+
+`table-layout` 預設的 `auto` 依**全部列的內容**計算欄寬。只要展開／收合會增減
+**完整欄位的列**，每一欄的內容都變了，整張表就會跳動。
+
+```scss
+.table { @include table-base; table-layout: fixed; min-width: 1080px; }
+
+.colStatus { width: 100px; }   // 欄寬集中宣告，搭配 JSX 的 <colgroup>
+```
+
+- 只有在展開列是 **`<td colSpan={N}>` 的整寬詳情面板**時才不需要——
+  colspan 儲存格不參與個別欄寬計算，不會造成跳動
+- 改用 `fixed` 後，要移除儲存格內為了「跟 auto layout 搶寬度」而設的 `min-width`，
+  它們只會讓內容溢出欄位
+- 不指定寬度的那一欄會吸收剩餘空間（通常留給名稱欄）
+
+#### 規則三：列表表格的名稱欄不放圖示
+
+`MIcon` 一律 `aria-hidden`，螢幕閱讀器讀不到，所以名稱欄的圖示至多只能是給
+視覺使用者的輔助。實際盤點全站後，這些圖示分成兩種，**兩種都不該留**：
+
+| 型態 | 例子 | 問題 |
+|------|------|------|
+| 隨資料變化 | `terminal` / `computer` 對應 LXC / VM | 型別文字（「容器 (LXC)」）就寫在名稱正下方，圖示只是重複一次 |
+| 每列都相同 | `task`、`memory`、`device_hub`、`library_add` | 不編碼任何列資訊，純粹是版面慣性 |
+
+拿掉後名稱欄整欄對齊，掃視更快。**這條只管列表表格的名稱／資料儲存格**——
+狀態徽章、按鈕、頁首、空狀態插圖的圖示不受影響，它們本來就承擔語意。
+
+名稱欄的版面一併統一：
+
+```scss
+.nameCell { display: flex; align-items: center; gap: $spacing-16; }
+
+/* 巢狀列（群組 → 機器）的階層靠 └ 表達，不靠縮排圖示。
+   顏色要用文字系的 muted，--color-border 是邊框用色，淡到看不見。 */
+.machineBranch { color: var(--color-text-muted); }
+```
 
 ### Dropdown 選單
 
@@ -340,6 +446,37 @@ import MIcon from "../components/MIcon";
 }
 // 使用：animation: fadeIn 0.15s ease;
 ```
+
+### Dialog / Popup 的進出場（標準作法）
+
+Dialog 一律「遮罩 `fadeIn` + 內容 `slideUp`」進場；離場由共用 hook `hooks/useDialogPresence.js` 處理——關閉時先保留 DOM 150ms 套上 `Out` class 播放淡出，再卸載：
+
+```jsx
+import useDialogPresence from "../hooks/useDialogPresence";
+
+const dialog = useDialogPresence(editTarget);   // 布林或資料物件皆可
+// 關閉期間 dialog.item 會保留最後一筆資料，避免內容閃爍
+{dialog.open && (
+  <div className={`${styles.modalOverlay} ${dialog.closing ? styles.modalOverlayOut : ""}`}>
+    <EditModal target={dialog.item} … />
+  </div>
+)}
+```
+
+```scss
+.modalOverlay {
+  /* …定位與遮罩… */
+  animation: fadeIn 0.15s ease;
+  transition: opacity 0.15s ease;
+}
+.modalOverlayOut {
+  animation: none;   // 覆蓋入場 animation，讓 transition 接管
+  opacity: 0;
+  pointer-events: none;
+}
+```
+
+共用 Dialog 元件（如 `ConnectionDialog`、`ReverseProxyRuleModal`）接受 `closing` prop 套用 Out class，由父層的 `useDialogPresence` 控制。自含式 Dialog（如 `VncDialog`、`TerminalDialog`）則在內部 `setClosing(true)` 後 `setTimeout(onClose, 150)`。
 
 ### 離場動畫（關閉）
 
@@ -397,9 +534,12 @@ function closeMenu() {
 | 層級 | 值 | 用途 |
 |------|-----|------|
 | 基礎卡片 | 1 | 一般卡片 |
-| 卡片 hover / 選單 | 50 | Dropdown 選單 |
+| 卡片 hover / 選單 | 50 | 容器內的 Dropdown 選單 |
 | Sticky Header | 100 | 頁面頂部導覽列 |
+| Portal 浮層選單 | 150 | portal 到 body 的 Dropdown（如 `components/PowerMenu`） |
 | Dialog / Modal | 300 | 全頁覆蓋 Dialog |
 | Toast / Tooltip | 400 | 通知、提示 |
 
 > ⚠️ 注意：使用 `backdrop-filter` 或 `transform` 的元素會建立新的 stacking context，子元素的 `z-index` 無法穿透至外層。若發現 Dropdown 被其他卡片遮住，請確認父元素是否有這類屬性。
+>
+> 玻璃表面（`glass-surface`）搭配 `overflow: hidden` 的容器還會**裁掉**溢出的 absolute 選單。浮層若可能超出容器範圍，改用 `createPortal` 掛到 `document.body` 並以 `position: fixed` 定位（範例：`components/PowerMenu`），且背景要用不透明的 `var(--color-surface)`，否則會透出底下的列表內容。

@@ -1,22 +1,111 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import styles from "./TemplatesPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import EmptyState from "../../../components/EmptyState/EmptyState";
 import { useAuth } from "../../../contexts/AuthContext";
-import { TemplatesService } from "../../../services/templates";
+import { TemplatesService, safeTemplateIconUrl } from "../../../services/templates";
+import { downloadBlob } from "../../../services/api";
 import { useToast } from "../../../hooks/useToast";
+import useDialogPresence from "../../../hooks/useDialogPresence";
+import { useConfirm } from "../../../components/ConfirmDialog/ConfirmProvider";
 import { TemplateStatusBadge } from "./TemplateBadges";
 import TemplateCloneDialog from "./TemplateCloneDialog";
 import TemplateFormDialog from "./TemplateFormDialog";
-import TemplateTasksCard from "./TemplateTasksCard";
+import LoadingState from "../../../components/LoadingState/LoadingState";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 function visibilityLabel(template) {
   return template.visibility === "global"
-    ? "全域"
-    : `${template.group_ids?.length ?? 0} 個群組`;
+    ? "全部可見"
+    : "私人";
+}
+
+const formatBytes = (bytes) => {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+};
+
+/** 使用手冊（附件）瀏覽與下載 */
+function ManualDialog({ template, closing = false, onClose }) {
+  const toast = useToast();
+  const [attachments, setAttachments] = useState(null);
+  const [downloadingId, setDownloadingId] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    TemplatesService.listAttachments(template.id)
+      .then((res) => !cancelled && setAttachments(res?.data ?? []))
+      .catch((e) => {
+        if (!cancelled) {
+          toast.error(e?.message ?? "附件載入失敗");
+          setAttachments([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [template.id, toast]);
+
+  const handleDownload = async (attachment) => {
+    setDownloadingId(attachment.id);
+    try {
+      const blob = await TemplatesService.downloadAttachment(template.id, attachment.id);
+      downloadBlob(blob, attachment.filename);
+    } catch (e) {
+      toast.error(e?.message ?? "下載失敗");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  return (
+    <div
+      className={`${styles.modalOverlay} ${closing ? styles.modalOverlayOut : ""}`}
+      onClick={onClose}
+    >
+      <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <span className={styles.modalTitle}>
+          <MIcon name="description" size={20} />
+          「{template.name}」使用手冊
+        </span>
+        {attachments === null ? (
+          <LoadingState text="載入附件中…" />
+        ) : attachments.length === 0 ? (
+          <p className={styles.stateText}>此範本目前沒有附件。</p>
+        ) : (
+          <div className={styles.attachList}>
+            {attachments.map((a) => (
+              <div key={a.id} className={styles.attachItem}>
+                <MIcon name="description" size={15} />
+                <span className={styles.attachName}>{a.filename}</span>
+                <span className={styles.attachSize}>{formatBytes(a.size_bytes)}</span>
+                <button
+                  type="button"
+                  className={styles.attachBtn}
+                  disabled={downloadingId === a.id}
+                  onClick={() => handleDownload(a)}
+                >
+                  <MIcon name="download" size={15} />
+                  {downloadingId === a.id ? "下載中…" : "下載"}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className={styles.modalActions}>
+          <button type="button" className={styles.btnSecondary} onClick={onClose}>
+            關閉
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** 單列的「⋯」操作選單 */
-function RowMenu({ template, cycleBusy, onClone, onEdit, onCycle, onDelete, onClose, anchorRef }) {
+function RowMenu({ template, cycleBusy, onClone, onEdit, onManual, onRetry, onCycle, onDelete, onClose, anchorRef, closing = false }) {
   const ref = useRef(null);
 
   useEffect(() => {
@@ -28,7 +117,7 @@ function RowMenu({ template, cycleBusy, onClone, onEdit, onCycle, onDelete, onCl
   }, [onClose, anchorRef]);
 
   return (
-    <div ref={ref} className={styles.rowMenu}>
+    <div ref={ref} className={`${styles.rowMenu} ${closing ? styles.rowMenuOut : ""}`}>
       <button
         type="button"
         className={styles.rowMenuItem}
@@ -46,7 +135,28 @@ function RowMenu({ template, cycleBusy, onClone, onEdit, onCycle, onDelete, onCl
         <MIcon name="edit" size={15} />
         編輯 / 可見範圍
       </button>
+      {template.attachment_count > 0 && (
+        <button
+          type="button"
+          className={styles.rowMenuItem}
+          onClick={() => { onClose(); onManual(template); }}
+        >
+          <MIcon name="description" size={15} />
+          使用手冊（{template.attachment_count}）
+        </button>
+      )}
       <div className={styles.rowMenuDivider} />
+      {template.status === "failed" && (
+        <button
+          type="button"
+          className={styles.rowMenuItem}
+          disabled={cycleBusy}
+          onClick={() => { onClose(); onRetry(template.id); }}
+        >
+          <MIcon name="restart_alt" size={15} />
+          重新轉換
+        </button>
+      )}
       {template.status === "ready" && (
         <button
           type="button"
@@ -92,16 +202,24 @@ function RowMenu({ template, cycleBusy, onClone, onEdit, onCycle, onDelete, onCl
   );
 }
 
-function ManagementRow({ template, cycleBusy, onClone, onEdit, onCycle, onDelete }) {
+function ManagementRow({ template, cycleBusy, onClone, onEdit, onManual, onRetry, onCycle, onDelete }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menu = useDialogPresence(menuOpen, 130);
   const menuBtnRef = useRef(null);
 
   return (
     <tr className={styles.tr}>
       <td className={styles.td}>
         <div className={styles.nameCell}>
+          {safeTemplateIconUrl(template.icon_url) && (
+            <img
+              className={styles.iconThumbSmall}
+              src={safeTemplateIconUrl(template.icon_url)}
+              alt=""
+            />
+          )}
           <span className={styles.namePrimary}>{template.name}</span>
-          {template.pve_exists === false && (
+          {template.pve_exists === false && template.status === "ready" && (
             <span className={styles.pveMissing} title="PVE 端找不到這個範本，可能已被手動刪除">
               <MIcon name="warning" size={13} />
               PVE 不存在
@@ -122,20 +240,28 @@ function ManagementRow({ template, cycleBusy, onClone, onEdit, onCycle, onDelete
       <td className={styles.td}>
         <TemplateStatusBadge status={template.status} />
       </td>
-      <td className={`${styles.td} ${styles.mutedCell}`}>{visibilityLabel(template)}</td>
+      <td className={`${styles.td} ${styles.mutedCell}`}>
+        {visibilityLabel(template)}
+        {template.student_requestable && (
+          <span className={styles.typeChip}>學生可申請</span>
+        )}
+      </td>
       <td className={`${styles.td} ${styles.mutedCell}`}>v{template.version}</td>
       <td className={`${styles.td} ${styles.tdMenu}`}>
         <div className={styles.menuWrap}>
-          {menuOpen && (
+          {menu.open && (
             <RowMenu
               template={template}
               cycleBusy={cycleBusy}
               onClone={onClone}
               onEdit={onEdit}
+              onManual={onManual}
+              onRetry={onRetry}
               onCycle={onCycle}
               onDelete={onDelete}
               onClose={() => setMenuOpen(false)}
               anchorRef={menuBtnRef}
+              closing={menu.closing}
             />
           )}
           <button
@@ -153,11 +279,11 @@ function ManagementRow({ template, cycleBusy, onClone, onEdit, onCycle, onDelete
   );
 }
 
-function StudentCatalog({ templates, onClone }) {
+function StudentCatalog({ templates, onClone, onManual }) {
   if (templates.length === 0) {
     return (
       <div className={styles.card}>
-        <p className={styles.stateText}>目前沒有可用的範本。老師發布範本後，就會出現在這裡。</p>
+        <EmptyState icon="widgets" title="目前沒有可用的範本" />
       </div>
     );
   }
@@ -167,7 +293,15 @@ function StudentCatalog({ templates, onClone }) {
       {templates.map((template) => (
         <div key={template.id} className={styles.catalogCard}>
           <div className={styles.catalogHead}>
-            <MIcon name="library_books" size={18} />
+            {safeTemplateIconUrl(template.icon_url) ? (
+              <img
+                className={styles.iconThumb}
+                src={safeTemplateIconUrl(template.icon_url)}
+                alt=""
+              />
+            ) : (
+              <MIcon name="library_books" size={18} />
+            )}
             <span className={styles.catalogName}>{template.name}</span>
           </div>
           {template.description && (
@@ -187,15 +321,33 @@ function StudentCatalog({ templates, onClone }) {
               <span className={styles.typeChip}>{template.default_disk} GB 磁碟</span>
             )}
             <span className={styles.typeChip}>v{template.version}</span>
+            {template.allow_password_change === false && (
+              <span className={styles.typeChip}>固定帳密</span>
+            )}
+            {template.student_requestable && (
+              <span className={styles.typeChip}>學生可申請</span>
+            )}
           </div>
-          <button
-            type="button"
-            className={`${styles.btnPrimary} ${styles.catalogBtn}`}
-            onClick={() => onClone(template)}
-          >
-            <MIcon name="content_copy" size={14} />
-            一鍵克隆
-          </button>
+          <div className={styles.catalogActions}>
+            <button
+              type="button"
+              className={`${styles.btnPrimary} ${styles.catalogBtn}`}
+              onClick={() => onClone(template)}
+            >
+              <MIcon name="content_copy" size={14} />
+              一鍵克隆
+            </button>
+            {template.attachment_count > 0 && (
+              <button
+                type="button"
+                className={`${styles.btnSecondary} ${styles.catalogBtn}`}
+                onClick={() => onManual(template)}
+              >
+                <MIcon name="description" size={14} />
+                使用手冊（{template.attachment_count}）
+              </button>
+            )}
+          </div>
         </div>
       ))}
     </div>
@@ -204,6 +356,7 @@ function StudentCatalog({ templates, onClone }) {
 
 export default function TemplatesPage() {
   const toast = useToast();
+  const confirm = useConfirm();
   const { user } = useAuth();
   const canManage =
     user?.role === "admin" || user?.role === "teacher" || user?.is_superuser === true;
@@ -213,11 +366,28 @@ export default function TemplatesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [cloneTarget, setCloneTarget] = useState(null);
+  const [manualTarget, setManualTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const createDialog  = useDialogPresence(createOpen);
+  const editDialog    = useDialogPresence(editTarget);
+  const manualDialog  = useDialogPresence(manualTarget);
+  const cloneDialog   = useDialogPresence(cloneTarget);
+  const deleteDialog  = useDialogPresence(deleteTarget);
   const [cycleBusy, setCycleBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [tasksKey, setTasksKey] = useState(0);
   const timerRef = useRef(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // 儀表板「快速入門」深連結：?clone=<templateId> 直接打開克隆視窗
+  useEffect(() => {
+    const cloneId = searchParams.get("clone");
+    if (!cloneId || templates === null) return;
+    const target = templates.find(
+      (t) => t.id === cloneId && t.status === "ready",
+    );
+    if (target) setCloneTarget(target);
+    setSearchParams({}, { replace: true });
+  }, [templates, searchParams, setSearchParams]);
 
   const load = useCallback(async () => {
     try {
@@ -252,11 +422,20 @@ export default function TemplatesPage() {
   const refresh = async () => {
     setRefreshing(true);
     await load();
-    setTasksKey((k) => k + 1);
     setRefreshing(false);
   };
 
   const handleCycle = async (templateId, action) => {
+    if (action === "finish") {
+      const ok = await confirm({
+        title: "完成更新並轉為新版範本？",
+        message:
+          "暫存母機會被關機，且其所有快照（備份點）會被移除，接著轉為新版唯讀範本並汰換舊版。此動作無法復原。",
+        confirmText: "關機並轉換",
+        danger: true,
+      });
+      if (!ok) return;
+    }
     setCycleBusy(true);
     try {
       if (action === "start") await TemplatesService.startUpdateCycle(templateId);
@@ -270,9 +449,29 @@ export default function TemplatesPage() {
             : "已取消更新循環，暫存母機將被回收",
       );
       await load();
-      setTasksKey((k) => k + 1);
     } catch (e) {
       toast.error(e?.message ?? "操作失敗");
+    } finally {
+      setCycleBusy(false);
+    }
+  };
+
+  const handleRetry = async (templateId) => {
+    const ok = await confirm({
+      title: "重新轉換為範本？",
+      message:
+        "母機會被關機，且其所有快照（備份點）會被移除，再轉為唯讀範本。此動作無法復原。",
+      confirmText: "關機並轉換",
+      danger: true,
+    });
+    if (!ok) return;
+    setCycleBusy(true);
+    try {
+      await TemplatesService.retry(templateId);
+      toast.success("已重新送出轉換；母機會先安全關機、移除所有快照，再轉為唯讀範本");
+      await load();
+    } catch (e) {
+      toast.error(e?.message ?? "重新轉換失敗");
     } finally {
       setCycleBusy(false);
     }
@@ -282,10 +481,9 @@ export default function TemplatesPage() {
     setDeleting(true);
     try {
       await TemplatesService.remove(deleteTarget.id);
-      toast.success("刪除任務已送出");
+      toast.success("刪除任務已送出，進度請見側欄「背景任務」");
       setDeleteTarget(null);
       await load();
-      setTasksKey((k) => k + 1);
     } catch (e) {
       toast.error(e?.message ?? "刪除範本失敗");
       setDeleteTarget(null);
@@ -299,15 +497,7 @@ export default function TemplatesPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>模板管理</h1>
-          <p className={styles.pageSubtitle}>
-            {canManage
-              ? "把設定好的母機轉為範本，學生即可一鍵克隆出自己的環境"
-              : "從老師提供的範本一鍵克隆出自己的環境，開好即用"}
-          </p>
-        </div>
+      <PageHeader title="機器母範本" subtitle="管理教師組裝多機環境時使用的單機來源；學生不會直接看到或複製母範本。">
         <div className={styles.pageActions}>
           <button
             type="button"
@@ -329,18 +519,17 @@ export default function TemplatesPage() {
             </button>
           )}
         </div>
-      </div>
+      </PageHeader>
 
       {templates === null ? (
-        <div className={styles.card}>
-          <p className={styles.stateText}>載入範本中…</p>
-        </div>
+        <LoadingState fullPage text="載入範本中…" />
       ) : canManage ? (
         list.length === 0 ? (
           <div className={styles.card}>
-            <p className={styles.stateText}>
-              還沒有任何範本。先準備好一台母機（裝好系統與課程環境），再點右上角「從 VM 建立範本」。
-            </p>
+            <EmptyState
+              icon="widgets"
+              title="還沒有任何範本"
+            />
           </div>
         ) : (
           <div className={styles.card}>
@@ -364,6 +553,8 @@ export default function TemplatesPage() {
                     cycleBusy={cycleBusy}
                     onClone={setCloneTarget}
                     onEdit={setEditTarget}
+                    onManual={setManualTarget}
+                    onRetry={handleRetry}
                     onCycle={handleCycle}
                     onDelete={setDeleteTarget}
                   />
@@ -373,40 +564,51 @@ export default function TemplatesPage() {
           </div>
         )
       ) : (
-        <StudentCatalog templates={readyTemplates} onClone={setCloneTarget} />
-      )}
-
-      <TemplateTasksCard key={tasksKey} />
-
-      {createOpen && (
-        <TemplateFormDialog
-          onClose={() => setCreateOpen(false)}
-          onSaved={() => {
-            load();
-            setTasksKey((k) => k + 1);
-          }}
+        <StudentCatalog
+          templates={readyTemplates}
+          onClone={setCloneTarget}
+          onManual={setManualTarget}
         />
       )}
-      {editTarget && (
+
+      {createDialog.open && (
         <TemplateFormDialog
-          template={editTarget}
+          closing={createDialog.closing}
+          onClose={() => setCreateOpen(false)}
+          onSaved={() => load()}
+        />
+      )}
+      {editDialog.open && (
+        <TemplateFormDialog
+          template={editDialog.item}
+          closing={editDialog.closing}
           onClose={() => setEditTarget(null)}
           onSaved={() => load()}
         />
       )}
-      {cloneTarget && (
+      {manualDialog.open && (
+        <ManualDialog
+          template={manualDialog.item}
+          closing={manualDialog.closing}
+          onClose={() => setManualTarget(null)}
+        />
+      )}
+      {cloneDialog.open && (
         <TemplateCloneDialog
-          template={cloneTarget}
+          template={cloneDialog.item}
           canBatch={canManage}
+          closing={cloneDialog.closing}
           onClose={() => setCloneTarget(null)}
-          onCloned={() => setTasksKey((k) => k + 1)}
         />
       )}
 
-      {deleteTarget && (
-        <div className={styles.modalOverlay} onClick={() => setDeleteTarget(null)}>
+      {deleteDialog.open && (
+        <div
+          className={`${styles.modalOverlay} ${deleteDialog.closing ? styles.modalOverlayOut : ""}`}
+          onClick={() => setDeleteTarget(null)}
+        >
           <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-            <span className={styles.modalTitle}>刪除範本「{deleteTarget.name}」？</span>
+            <span className={styles.modalTitle}>刪除範本「{deleteDialog.item.name}」？</span>
             <p className={styles.modalDesc}>
               PVE 端的範本磁碟會一併刪除，動作無法復原。如果還有從此範本克隆出的機器（linked
               clone），系統會拒絕刪除。

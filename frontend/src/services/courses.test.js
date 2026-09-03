@@ -21,6 +21,12 @@ const jsonRes = (status, body = {}) => ({
   json: async () => body,
 });
 
+const blobRes = (status, body) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  blob: async () => body,
+});
+
 let fetchMock;
 
 beforeEach(() => {
@@ -30,6 +36,20 @@ beforeEach(() => {
 });
 
 describe("CoursesService", () => {
+  test("首頁課表與提醒使用各自的學生 API", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(200, []))
+      .mockResolvedValueOnce(jsonRes(200, []));
+
+    await CoursesService.listSchedule();
+    await CoursesService.listReminders();
+
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/v1/courses/schedule");
+    expect(fetchMock.mock.calls[1][0]).toContain("/api/v1/courses/reminders");
+    expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+    expect(fetchMock.mock.calls[1][1].method).toBe("GET");
+  });
+
   test("listPaths 以 GET 打 /courses/paths", async () => {
     fetchMock.mockResolvedValueOnce(jsonRes(200, []));
     await CoursesService.listPaths();
@@ -53,6 +73,74 @@ describe("CoursesService", () => {
     expect(url).toContain("/api/v1/courses/questions/q-1/submit");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body)).toEqual({ answer: "FLAG{x}" });
+  });
+
+  test("學生 AI Check 使用課程與任務範圍的專用端點", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(200, { run_id: "run-1", status: "pending" }))
+      .mockResolvedValueOnce(jsonRes(200, { run_id: "run-1", status: "completed" }));
+
+    await CoursesService.startAiCheck("path-1", "assignment-1");
+    await CoursesService.getAiCheck("path-1", "assignment-1", "run-1");
+
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      "/api/v1/courses/paths/path-1/ai-assignments/assignment-1/checks",
+    );
+    expect(fetchMock.mock.calls[0][1].method).toBe("POST");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({});
+    expect(fetchMock.mock.calls[1][0]).toContain(
+      "/api/v1/courses/paths/path-1/ai-assignments/assignment-1/checks/run-1",
+    );
+    expect(fetchMock.mock.calls[1][1].method).toBe("GET");
+  });
+
+  test("學生可只送出單一 Checkpoint 檢查", async () => {
+    fetchMock.mockResolvedValueOnce(jsonRes(200, { run_id: "run-2", status: "pending" }));
+
+    await CoursesService.startAiCheck("path-1", "assignment-1", "checkpoint-2");
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ item_id: "checkpoint-2" });
+  });
+
+  test("學生透過受保護端點取得老師上傳的任務 PDF", async () => {
+    const pdf = new Blob(["pdf"], { type: "application/pdf" });
+    fetchMock.mockResolvedValueOnce(blobRes(200, pdf));
+
+    const result = await CoursesService.getAiAssignmentDocument("path-1", "assignment-1");
+
+    expect(result).toBe(pdf);
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      "/api/v1/courses/paths/path-1/ai-assignments/assignment-1/source-document",
+    );
+    expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+  });
+
+  test("學生取得已發布的每週任務並透過受保護端點預覽 PDF", async () => {
+    const pdf = new Blob(["weekly-pdf"], { type: "application/pdf" });
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(200, [{ id: "week-1", title: "Linux 權限" }]))
+      .mockResolvedValueOnce(blobRes(200, pdf));
+
+    await CoursesService.getWeeklyTasks("path-1");
+    const result = await CoursesService.getWeeklyTaskDocument("path-1", "week-1", "file-1");
+
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/v1/courses/paths/path-1/weekly-tasks");
+    expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+    expect(fetchMock.mock.calls[1][0]).toContain(
+      "/api/v1/courses/paths/path-1/weekly-tasks/week-1/files/file-1",
+    );
+    expect(fetchMock.mock.calls[1][1].method).toBe("GET");
+    expect(result).toBe(pdf);
+  });
+
+  test("getPracticeMachines 取得課程的所有班級機器", async () => {
+    fetchMock.mockResolvedValueOnce(jsonRes(200, []));
+
+    await CoursesService.getPracticeMachines("path-1");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain("/api/v1/courses/paths/path-1/practice-machines");
+    expect(init.method).toBe("GET");
   });
 
   test("terminateDeployment 以 DELETE 打 /deployments/{id}", async () => {

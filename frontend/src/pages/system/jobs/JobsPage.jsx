@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./JobsPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import LoadingState from "../../../components/LoadingState/LoadingState";
+import SharedEmptyState from "../../../components/EmptyState/EmptyState";
 import { JobsService } from "../../../services/jobs";
+import JobDetailDialog from "../../../components/Jobs/JobDetailDialog";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 const COLUMNS = ["任務", "類型", "狀態", "進度", "建立時間", "更新時間", "申請人"];
 
 const KIND_LABELS = {
-  script_deploy: "腳本部署",
   vm_request:    "VM 申請",
   spec_change:   "規格變更",
   deletion:      "刪除",
+  template:      "機器範本",
 };
 
 const STATUS_LABELS = {
@@ -36,15 +40,7 @@ const STATUS_OPTIONS = [
 
 function EmptyState() {
   return (
-    <div className={styles.empty}>
-      <div className={styles.emptyIcon}>
-        <MIcon name="hourglass_empty" size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>沒有符合條件的任務</h2>
-      <p className={styles.emptyDesc}>
-        所有部署、申請與規格變更等背景任務將顯示在這裡
-      </p>
-    </div>
+    <SharedEmptyState icon="hourglass_empty" title="沒有符合條件的任務" />
   );
 }
 
@@ -81,6 +77,7 @@ export default function JobsPage() {
   const [kind, setKind] = useState("all");
   const [status, setStatus] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [focusJobId, setFocusJobId] = useState(null);
 
   /** silent = true 時不觸發 loading 與錯誤提示，供背景自動刷新使用 */
   const load = useCallback(async (silent = false) => {
@@ -113,12 +110,7 @@ export default function JobsPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>背景任務</h1>
-          <p className={styles.pageSubtitle}>追蹤部署、申請與資源配置等長時間執行的任務</p>
-        </div>
-      </div>
+      <PageHeader title="背景任務" subtitle="追蹤部署、申請與資源配置等長時間執行的任務" />
 
       <div className={styles.statRow}>
         <div className={styles.statCard}>
@@ -178,7 +170,9 @@ export default function JobsPage() {
       </div>
 
       <div className={styles.content}>
-        {visible.length === 0 ? (
+        {loading ? (
+          <LoadingState fullPage text="載入背景任務..." />
+        ) : visible.length === 0 ? (
           <EmptyState />
         ) : (
           <div className={styles.tableWrap}>
@@ -192,12 +186,13 @@ export default function JobsPage() {
               </thead>
               <tbody>
                 {visible.map((j) => (
-                  <tr key={j.id} className={styles.tr}>
+                  <tr
+                    key={j.id}
+                    className={styles.tr}
+                    onClick={() => setFocusJobId(j.id)}
+                  >
                     <td className={styles.td}>
                       <div className={styles.nameCell}>
-                        <div className={styles.nameIcon}>
-                          <MIcon name="task" size={18} />
-                        </div>
                         <div>
                           <div className={styles.namePrimary}>{j.title ?? j.id}</div>
                           <div className={styles.nameSub}>{j.id}</div>
@@ -221,6 +216,8 @@ export default function JobsPage() {
           </div>
         )}
       </div>
+
+      <JobDetailDialog jobId={focusJobId} onClose={() => setFocusJobId(null)} />
     </div>
   );
 }

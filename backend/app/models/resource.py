@@ -34,20 +34,34 @@ class Resource(SQLModel, table=True):
         ),
         description="VM request that provisioned this resource",
     )
-    user_id: uuid.UUID = Field(foreign_key="user.id", description="Owner user ID")
+    user_id: uuid.UUID = Field(
+        foreign_key="user.id",
+        description="Assigned user ID; ownership is governed by allocation_scope",
+    )
+    teaching_class_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            sa.Uuid,
+            sa.ForeignKey("teaching_classes.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+        description="Teaching class that governs this resource",
+    )
+    allocation_scope: str = Field(
+        default="personal",
+        max_length=24,
+        description="personal or teaching_class",
+    )
+    control_policy: str = Field(
+        default="owner",
+        max_length=32,
+        description="owner or class_member",
+    )
     environment_type: str = Field(description="Environment type")
     os_info: str | None = Field(default=None, description="Operating system info")
     expiry_date: date | None = Field(default=None, description="Expiration date")
     template_id: int | None = Field(default=None, description="Proxmox template ID")
-    service_template_slug: str | None = Field(
-        default=None,
-        description="Service template slug",
-    )
-    ip_address: str | None = Field(default=None, max_length=64)
-    ip_address_cached_at: datetime | None = Field(
-        default=None,
-        sa_column=Column(DateTime(timezone=True), nullable=True),
-    )
     ssh_private_key_encrypted: str | None = Field(
         default=None,
         description="Encrypted private SSH key",
@@ -55,6 +69,10 @@ class Resource(SQLModel, table=True):
     ssh_public_key: str | None = Field(
         default=None,
         description="OpenSSH public key",
+    )
+    login_password_encrypted: str | None = Field(
+        default=None,
+        description="Encrypted per-clone login password",
     )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),

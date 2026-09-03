@@ -1,39 +1,36 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./RequestReviewPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import SharedEmptyState from "../../../components/EmptyState/EmptyState";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
+import LoadingState from "../../../components/LoadingState/LoadingState";
 import { AiApiService } from "../../../services/aiApi";
 import { DeletionRequestsService } from "../../../services/deletionRequests";
 import { SpecChangeRequestsService } from "../../../services/specChangeRequests";
 import { VmRequestsService } from "../../../services/vmRequests";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 const TABS = [
   { key: "pending", label: "待審核", icon: "pending_actions" },
   { key: "approved", label: "已通過", icon: "task_alt" },
   { key: "rejected", label: "已拒絕", icon: "block" },
+  { key: "expired", label: "已過期", icon: "hourglass_empty" },
   { key: "all", label: "全部", icon: "view_list" },
 ];
-
-const REVIEW_COLUMNS = ["申請類型", "申請內容", "申請人", "時間", "規格 / 摘要", "狀態"];
 
 const STATUS_META = {
   pending: { label: "待審核", tone: "info" },
   approved: { label: "已通過", tone: "success" },
   rejected: { label: "已拒絕", tone: "danger" },
   cancelled: { label: "已取消", tone: "muted" },
+  expired: { label: "已過期", tone: "muted" },
   running: { label: "處理中", tone: "info" },
   completed: { label: "已完成", tone: "muted" },
   failed: { label: "失敗", tone: "danger" },
   deleted_approved: { label: "已通過 / 資源已刪除", tone: "success" },
 };
 
-const EMPTY_TEXT = {
-  pending: "目前沒有待審核的申請",
-  approved: "目前沒有已通過的申請",
-  rejected: "目前沒有已拒絕的申請",
-  all: "目前沒有申請紀錄",
-};
 
 function formatDateTime(value) {
   if (!value) return "未設定";
@@ -52,12 +49,16 @@ function formatRange(startAt, endAt) {
   return `${formatDateTime(startAt)} - ${formatDateTime(endAt)}`;
 }
 
+const CONSUMED_REQUEST_MARKERS = [
+  "Resource deleted by user",
+  "Resource deleted (orphan DB cleanup)",
+  "Resource converted to template",
+];
+
 function isDeletedApprovedVm(request) {
   return (
-    request?.review_comment === "Resource deleted by user" ||
-    request?.review_comment === "Resource deleted (orphan DB cleanup)" ||
-    request?.resource_warning === "Resource deleted by user" ||
-    request?.resource_warning === "Resource deleted (orphan DB cleanup)"
+    CONSUMED_REQUEST_MARKERS.includes(request?.review_comment) ||
+    CONSUMED_REQUEST_MARKERS.includes(request?.resource_warning)
   );
 }
 
@@ -111,7 +112,7 @@ function normalizeVmRequest(request) {
   const deletedApproved = isDeletedApprovedVm(request);
   const reviewStatus = deletedApproved
     ? "approved"
-    : ["pending", "approved", "rejected"].includes(request.status)
+    : ["pending", "approved", "rejected", "expired"].includes(request.status)
       ? request.status
       : "other";
 
@@ -132,7 +133,6 @@ function normalizeVmRequest(request) {
     paramText:
       request.os_info ||
       request.ostemplate ||
-      request.service_template_slug ||
       (request.template_id ? `Template #${request.template_id}` : "未設定"),
     gpuText: request.gpu_mapping_id || "未申請",
     nodeText: request.assigned_node || request.desired_node || "尚未評估",
@@ -222,16 +222,8 @@ function StatusBadge({ status }) {
   );
 }
 
-function EmptyState({ tab }) {
-  return (
-    <div className={styles.empty}>
-      <div className={styles.emptyIcon}>
-        <MIcon name="assignment_turned_in" size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>沒有申請</h2>
-      <p className={styles.emptyDesc}>{EMPTY_TEXT[tab]}</p>
-    </div>
-  );
+function EmptyState() {
+  return <SharedEmptyState icon="assignment_turned_in" title="沒有申請" />;
 }
 
 function InfoRow({ label, value }) {
@@ -377,6 +369,12 @@ export default function RequestReviewPage() {
   }
 
   const isPending = selected?.reviewStatus === "pending";
+  /* 系統寫入的刪除標記（CONSUMED_REQUEST_MARKERS）不是審核人留的備註，不顯示 */
+  const rawReviewComment = selected?.raw?.review_comment;
+  const reviewNote =
+    rawReviewComment && !CONSUMED_REQUEST_MARKERS.includes(rawReviewComment)
+      ? rawReviewComment
+      : null;
   const stats = useMemo(() => {
     const source = allRequests.length ? allRequests : requests;
     const pending = source.filter((request) => request.reviewStatus === "pending").length;
@@ -407,14 +405,7 @@ export default function RequestReviewPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>申請審核</h1>
-          <p className={styles.pageSubtitle}>
-            集中查看建立、規格調整、AI API 金鑰與刪除請求；刪除資源不會扣除原本已通過的審核數量
-          </p>
-        </div>
-      </div>
+      <PageHeader title="申請審核" subtitle="集中查看建立、規格調整、AI API 金鑰與刪除請求；刪除資源不會扣除原本已通過的審核數量" />
 
       <div className={styles.statRow}>
         <div className={styles.statCard}>
@@ -486,7 +477,7 @@ export default function RequestReviewPage() {
         <div className={styles.reviewGrid}>
           <section className={styles.listPane}>
             {loading ? (
-              <div className={styles.stateBox}>讀取申請中...</div>
+              <LoadingState text="讀取申請中..." />
             ) : error ? (
               <div className={styles.stateBox}>
                 <span>{error}</span>
@@ -497,42 +488,29 @@ export default function RequestReviewPage() {
             ) : visibleRequests.length === 0 ? (
               <EmptyState tab={activeTab} />
             ) : (
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      {REVIEW_COLUMNS.map((column) => (
-                        <th key={column} className={styles.th}>{column}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleRequests.map((request) => (
-                      <tr
-                        key={request.id}
-                        className={`${styles.tr} ${selected?.id === request.id ? styles.trActive : ""}`}
-                        onClick={() => { setSelectedId(request.id); setComment(""); }}
-                      >
-                        <td className={styles.td}>{sourceLabel(request.source)}</td>
-                        <td className={styles.td}>
-                          <div className={styles.nameCell}>
-                            <div className={styles.nameIcon}>
-                              <MIcon name={sourceIcon(request)} size={18} />
-                            </div>
-                            <div>
-                              <div className={styles.namePrimary}>{request.title}</div>
-                              <div className={styles.nameSub}>{request.paramText}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className={styles.td}>{request.user}</td>
-                        <td className={styles.td}>{request.timeText}</td>
-                        <td className={styles.td}>{request.specText}</td>
-                        <td className={styles.td}><StatusBadge status={request.status} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className={styles.list}>
+                {visibleRequests.map((request) => (
+                  <button
+                    key={request.id}
+                    type="button"
+                    className={`${styles.row} ${selected?.id === request.id ? styles.rowActive : ""}`}
+                    onClick={() => { setSelectedId(request.id); setComment(""); }}
+                  >
+                    <div className={styles.rowIcon}>
+                      <MIcon name={sourceIcon(request)} size={20} />
+                    </div>
+                    <div className={styles.rowMain}>
+                      <span className={styles.rowName}>{request.title}</span>
+                      <span className={styles.rowMeta}>
+                        {sourceLabel(request.source)}・{request.user}
+                      </span>
+                    </div>
+                    <div className={styles.rowSide}>
+                      <StatusBadge status={request.status} />
+                      <span className={styles.rowTime}>{request.timeText}</span>
+                    </div>
+                  </button>
+                ))}
               </div>
             )}
           </section>
@@ -543,11 +521,8 @@ export default function RequestReviewPage() {
             ) : (
               <>
                 <div className={styles.detailHeader}>
-                  <div>
-                    <h2>{selected.title}</h2>
-                    <p>{selected.user}</p>
-                  </div>
-                  <StatusBadge status={selected.status} />
+                  <h2>{selected.title}</h2>
+                  <p>{selected.user}</p>
                 </div>
 
                 <div className={styles.infoGrid}>
@@ -564,7 +539,7 @@ export default function RequestReviewPage() {
                   <p>{selected.reason}</p>
                 </div>
 
-                {contextLoading && <div className={styles.stateBox}>讀取資源評估中...</div>}
+                {contextLoading && <LoadingState text="讀取資源評估中..." />}
                 {contextError && selected.source === "vm" && (
                   <div className={`${styles.stateBox} ${styles.stateError}`}>
                     {contextError}
@@ -587,19 +562,18 @@ export default function RequestReviewPage() {
                   </div>
                 )}
 
-                <label className={styles.commentField}>
-                  <span>審核備註</span>
-                  <textarea
-                    value={comment}
-                    onChange={(event) => setComment(event.target.value)}
-                    disabled={!isPending || reviewing || selected.source === "deletion"}
-                    placeholder="可填寫核准原因或退回說明"
-                  />
-                </label>
-
-                <div className={styles.rowActions}>
-                  {isPending && selected.source !== "deletion" ? (
-                    <>
+                {isPending && selected.source !== "deletion" ? (
+                  <>
+                    <label className={styles.commentField}>
+                      <span>審核備註</span>
+                      <textarea
+                        value={comment}
+                        onChange={(event) => setComment(event.target.value)}
+                        disabled={reviewing}
+                        placeholder="可填寫核准原因或退回說明"
+                      />
+                    </label>
+                    <div className={styles.rowActions}>
                       <button
                         type="button"
                         className={styles.btnApprove}
@@ -616,13 +590,23 @@ export default function RequestReviewPage() {
                       >
                         拒絕
                       </button>
-                    </>
-                  ) : selected.source === "deletion" ? (
+                    </div>
+                  </>
+                ) : selected.source === "deletion" ? (
+                  <div className={styles.rowActions}>
                     <span className={styles.doneText}>刪除請求只作為申請紀錄，不計入審核通過數量。</span>
-                  ) : (
-                    <span className={styles.doneText}>這筆申請已完成審核。</span>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  (reviewNote || selected.reviewedAt) && (
+                    <div className={styles.reasonBox}>
+                      <span>
+                        審核備註
+                        {selected.reviewedAt ? `（${formatDateTime(selected.reviewedAt)} 審核）` : ""}
+                      </span>
+                      <p>{reviewNote || "未填寫備註"}</p>
+                    </div>
+                  )
+                )}
               </>
             )}
           </section>

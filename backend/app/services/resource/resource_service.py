@@ -8,7 +8,8 @@ from typing import Literal
 from sqlmodel import Session
 
 from app.exceptions import BadRequestError, ProxmoxError
-from app.models.vm_request import VMProvisioningStatus, VMRequestStatus
+from app.models import TeachingClass, TeachingClassStatus
+from app.models.vm_request import VMProvisioningStatus, VMRequest, VMRequestStatus
 from app.repositories import audit_log as audit_log_repo
 from app.repositories import batch_provision as batch_provision_repo
 from app.repositories import resource as resource_repo
@@ -37,6 +38,19 @@ def _utc_now() -> datetime:
 
 
 def _enforce_start_window(*, session: Session, vmid: int) -> None:
+    resource = resource_repo.get_resource_by_vmid(session=session, vmid=vmid)
+    if resource and resource.teaching_class_id:
+        from app.models import TeachingClass, TeachingClassStatus
+
+        teaching_class = session.get(TeachingClass, resource.teaching_class_id)
+        if teaching_class is None or teaching_class.status != TeachingClassStatus.active:
+            raise BadRequestError("This teaching-class resource is no longer active.")
+        # The recurrence window controls automatic classroom boot/shutdown only.
+        # Enrolled students may manually start their assigned machine for
+        # after-class practice while the class remains active.  The start path
+        # applies the normal practice-session auto-stop policy below.
+        return
+
     request = vm_request_repo.get_latest_approved_vm_request_by_vmid(
         session=session,
         vmid=vmid,
@@ -92,6 +106,14 @@ def _normalize_live_resource_status(value: object) -> ResourceStatus:
     return "unknown"
 
 
+def _allocation_scope(value: object) -> Literal["personal", "teaching_class"]:
+    return "teaching_class" if value == "teaching_class" else "personal"
+
+
+def _control_policy(value: object) -> Literal["owner", "class_member"]:
+    return "class_member" if value == "class_member" else "owner"
+
+
 def _placeholder_resource_status(req) -> ResourceStatus:
     if req.provisioning_status == VMProvisioningStatus.failed or req.provisioning_error:
         return "failed"
@@ -106,6 +128,16 @@ def _build_resource_public(
     session: Session | None = None,
 ) -> ResourcePublic:
     vmid = resource.get("vmid")
+    class_governed = bool(
+        db_resource and db_resource.allocation_scope == "teaching_class"
+    )
+    class_available = not class_governed
+    if class_governed and session is not None and db_resource.teaching_class_id:
+        teaching_class = session.get(TeachingClass, db_resource.teaching_class_id)
+        class_available = bool(
+            teaching_class
+            and teaching_class.status == TeachingClassStatus.active
+        )
     ip_address = proxmox_service.get_ip_address(node, vmid, vm_type)
     if ip_address:
         if session is not None:
@@ -125,20 +157,37 @@ def _build_resource_public(
         # VM 離線時用 DB 快取
         if session is not None:
             ip_address = resource_repo.get_cached_ip_address(session=session, vmid=vmid)
+    quick_practice_limited = False
+    if session is not None and db_resource and db_resource.request_id:
+        source_request = session.get(VMRequest, db_resource.request_id)
+        quick_practice_limited = bool(
+            source_request and source_request.request_kind == "quick_template"
+        )
     return ResourcePublic(
         vmid=resource.get("vmid"),
         request_id=db_resource.request_id if db_resource else None,
+        teaching_class_id=db_resource.teaching_class_id if db_resource else None,
+        allocation_scope=_allocation_scope(
+            db_resource.allocation_scope if db_resource else None
+        ),
+        control_policy=_control_policy(
+            db_resource.control_policy if db_resource else None
+        ),
         name=_from_punycode_hostname(resource.get("name", "")),
         status=_normalize_live_resource_status(resource.get("status")),
         node=node,
         type=vm_type,
+        can_control=class_available,
+        can_delete=not class_governed,
+        can_request_spec_change=not class_governed,
+        can_extend=class_available and not quick_practice_limited,
         environment_type=db_resource.environment_type if db_resource else None,
         os_info=db_resource.os_info if db_resource else None,
         expiry_date=db_resource.expiry_date if db_resource else None,
         ip_address=ip_address,
         ssh_public_key=db_resource.ssh_public_key if db_resource else None,
-        service_template_slug=(
-            db_resource.service_template_slug if db_resource else None
+        has_login_password=bool(
+            db_resource.login_password_encrypted if db_resource else None
         ),
         cpu=resource.get("cpu"),
         maxcpu=resource.get("maxcpu"),
@@ -193,9 +242,34 @@ DELETED_TOMBSTONE_DAYS = 30
 # consumed request from the applications list.
 RESOURCE_DELETED_BY_USER_MARKER = "Resource deleted by user"
 RESOURCE_DELETED_ORPHAN_MARKER = "Resource deleted (orphan DB cleanup)"
+RESOURCE_CONVERTED_TO_TEMPLATE_MARKER = "Resource converted to template"
 _RESOURCE_DELETED_MARKERS = frozenset(
-    {RESOURCE_DELETED_BY_USER_MARKER, RESOURCE_DELETED_ORPHAN_MARKER}
+    {
+        RESOURCE_DELETED_BY_USER_MARKER,
+        RESOURCE_DELETED_ORPHAN_MARKER,
+        RESOURCE_CONVERTED_TO_TEMPLATE_MARKER,
+    }
 )
+
+
+def mark_linked_request_consumed(
+    *, session: Session, vmid: int, marker: str
+) -> None:
+    """把連結到 vmid 的 approved 申請單標為已消耗（機器已刪除或轉為範本）。
+
+    provisioning_status=failed 讓排程器不再接管該申請單；marker 寫入
+    resource_warning / review_comment 讓資源頁與審核頁不再顯示它。
+    """
+    linked_request = vm_request_repo.get_latest_approved_vm_request_by_vmid(
+        session=session, vmid=vmid,
+    )
+    if linked_request is None:
+        return
+    linked_request.provisioning_status = VMProvisioningStatus.failed
+    linked_request.provisioning_error = marker
+    linked_request.resource_warning = marker
+    linked_request.review_comment = marker
+    session.add(linked_request)
 
 
 def list_by_user(
@@ -245,6 +319,11 @@ def list_by_user(
                             ResourcePublic(
                                 vmid=db_r.vmid,
                                 request_id=db_r.request_id,
+                                teaching_class_id=db_r.teaching_class_id,
+                                allocation_scope=_allocation_scope(
+                                    db_r.allocation_scope
+                                ),
+                                control_policy=_control_policy(db_r.control_policy),
                                 name=(
                                     _from_punycode_hostname(request.hostname)
                                     if request
@@ -258,11 +337,16 @@ def list_by_user(
                                     getattr(request, "resource_type", None)
                                 ),
                                 can_control=False,
+                                can_delete=False,
+                                can_request_spec_change=False,
+                                can_extend=False,
                                 environment_type=db_r.environment_type,
                                 os_info=db_r.os_info,
                                 expiry_date=db_r.expiry_date,
                                 ssh_public_key=db_r.ssh_public_key,
-                                service_template_slug=db_r.service_template_slug,
+                                has_login_password=bool(
+                                    db_r.login_password_encrypted
+                                ),
                             )
                         )
                         shown_vmids.add(db_r.vmid)
@@ -303,6 +387,21 @@ def list_by_user(
             )
             if req.vmid:
                 shown_vmids.add(req.vmid)
+
+        # 3. Overlay in-progress deletions. Deletion runs from a background
+        # queue (shutdown → wait → destroy), so the VM stays visible in
+        # Proxmox as "stopped" for a while after the user hits delete;
+        # without this overlay the card would reappear as 已關機.
+        if shown_vmids:
+            from app.services.resource import deletion_service  # noqa: PLC0415
+
+            deleting_map = deletion_service.list_active_for_vmids(
+                session=session, vmids=list(shown_vmids)
+            )
+            for item in result:
+                if item.vmid in deleting_map:
+                    item.status = "deleting"
+                    item.can_control = False
 
         return result
     except Exception as e:
@@ -506,6 +605,12 @@ def delete(
     purge: bool = True,
     force: bool = False,
 ) -> dict:
+    tracked_resource = resource_repo.get_resource_by_vmid(
+        session=session, vmid=vmid
+    )
+    teaching_class_id = (
+        tracked_resource.teaching_class_id if tracked_resource else None
+    )
     try:
         node = resource_info["node"]
         resource_type = resource_info["type"]
@@ -551,7 +656,7 @@ def delete(
         except Exception as exc:
             logger.warning("Failed to release IP for VM %s: %s", vmid, exc)
 
-        # Unlink deleted VMID from historical batch tasks so group status won't
+        # Unlink deleted VMID from historical batch tasks so class job status won't
         # accidentally match a future resource that reuses the same VMID.
         try:
             cleared_count = batch_provision_repo.clear_task_vmid_references(
@@ -573,22 +678,22 @@ def delete(
                 exc,
             )
 
+        if teaching_class_id is not None:
+            _mark_class_machine_reclaimed(session=session, vmid=vmid)
+
         # Remove from database (resource record + all associated audit logs)
         resource_repo.delete_resource(session=session, vmid=vmid)
         audit_log_repo.delete_audit_logs_by_vmid(session=session, vmid=vmid)
+        _mark_class_reclaimed_if_empty(
+            session=session, teaching_class_id=teaching_class_id
+        )
 
         # Keep the original approval result for audit/review reporting.
         # Mark it as no longer schedulable so the scheduler will not
         # re-provision a resource that the user intentionally deleted.
-        linked_request = vm_request_repo.get_latest_approved_vm_request_by_vmid(
-            session=session, vmid=vmid,
+        mark_linked_request_consumed(
+            session=session, vmid=vmid, marker=RESOURCE_DELETED_BY_USER_MARKER,
         )
-        if linked_request is not None:
-            linked_request.provisioning_status = VMProvisioningStatus.failed
-            linked_request.provisioning_error = RESOURCE_DELETED_BY_USER_MARKER
-            linked_request.resource_warning = RESOURCE_DELETED_BY_USER_MARKER
-            linked_request.review_comment = RESOURCE_DELETED_BY_USER_MARKER
-            session.add(linked_request)
 
         audit_service.log_action(
             session=session,
@@ -622,6 +727,13 @@ def delete_orphan_db_record(
     batch task unlinking, DB row deletion, VM request scheduling stop, audit log).
     Safe to call when the VM is already gone from Proxmox.
     """
+    tracked_resource = resource_repo.get_resource_by_vmid(
+        session=session, vmid=vmid
+    )
+    teaching_class_id = (
+        tracked_resource.teaching_class_id if tracked_resource else None
+    )
+
     try:
         from app.services.network import reverse_proxy_service  # noqa: PLC0415
         reverse_proxy_service.remove_reverse_proxy_rules_for_vmid(session, vmid)
@@ -640,16 +752,17 @@ def delete_orphan_db_record(
         session.rollback()
         logger.warning("Orphan cleanup: failed to clear batch task refs for vmid=%s: %s", vmid, exc)
 
+    if teaching_class_id is not None:
+        _mark_class_machine_reclaimed(session=session, vmid=vmid)
     resource_repo.delete_resource(session=session, vmid=vmid)
     audit_log_repo.delete_audit_logs_by_vmid(session=session, vmid=vmid)
+    _mark_class_reclaimed_if_empty(
+        session=session, teaching_class_id=teaching_class_id
+    )
 
-    linked_request = vm_request_repo.get_latest_approved_vm_request_by_vmid(session=session, vmid=vmid)
-    if linked_request is not None:
-        linked_request.provisioning_status = VMProvisioningStatus.failed
-        linked_request.provisioning_error = RESOURCE_DELETED_ORPHAN_MARKER
-        linked_request.resource_warning = RESOURCE_DELETED_ORPHAN_MARKER
-        linked_request.review_comment = RESOURCE_DELETED_ORPHAN_MARKER
-        session.add(linked_request)
+    mark_linked_request_consumed(
+        session=session, vmid=vmid, marker=RESOURCE_DELETED_ORPHAN_MARKER,
+    )
 
     audit_service.log_action(
         session=session,
@@ -659,6 +772,49 @@ def delete_orphan_db_record(
         details=f"Orphan DB cleanup for vmid={vmid} (VM not found in Proxmox)",
     )
     logger.info("Orphan DB record for vmid=%s cleaned up", vmid)
+
+
+def _mark_class_reclaimed_if_empty(
+    *, session: Session, teaching_class_id: uuid.UUID | None
+) -> None:
+    if teaching_class_id is None:
+        return
+    from app.models import TeachingClass, TeachingClassStatus
+
+    teaching_class = session.get(TeachingClass, teaching_class_id)
+    if teaching_class is None:
+        return
+    if teaching_class.status != TeachingClassStatus.archived:
+        teaching_class.status = TeachingClassStatus.partial_failed
+        teaching_class.updated_at = _utc_now()
+    if resource_repo.get_resources_by_teaching_class(
+        session=session, teaching_class_id=teaching_class_id
+    ):
+        session.add(teaching_class)
+        session.commit()
+        return
+    teaching_class.resources_reclaimed_at = _utc_now()
+    session.add(teaching_class)
+    session.commit()
+
+
+def _mark_class_machine_reclaimed(*, session: Session, vmid: int) -> None:
+    from sqlmodel import select
+
+    from app.models import TeachingClassStudentMachine
+
+    mappings = session.exec(
+        select(TeachingClassStudentMachine).where(
+            TeachingClassStudentMachine.vmid == vmid
+        )
+    ).all()
+    for mapping in mappings:
+        mapping.vmid = None
+        mapping.status = "reclaimed"
+        mapping.error = None
+        session.add(mapping)
+    if mappings:
+        session.flush()
 
 
 def get_current_stats(*, vmid: int, resource_info: dict) -> dict:
@@ -772,6 +928,20 @@ def _set_auto_stop_for_user_start(*, session: Session, vmid: int) -> None:
     policy = get_schedule_policy(session=session)
     now = _utc_now()
 
+    resource = resource_repo.get_resource_by_vmid(session=session, vmid=vmid)
+    if resource and resource.teaching_class_id and resource.batch_job_id:
+        from app.models import BatchProvisionJob
+
+        job = session.get(BatchProvisionJob, resource.batch_job_id)
+        if job and is_in_window(job.next_window_start, job.next_window_end, now):
+            resource_repo.set_auto_stop(
+                session=session,
+                vmid=vmid,
+                auto_stop_at=job.next_window_end,
+                auto_stop_reason="window_grace",
+            )
+            return
+
     request = vm_request_repo.get_latest_approved_vm_request_by_vmid(
         session=session, vmid=vmid
     )
@@ -797,27 +967,34 @@ def extend_session(
     vmid: int,
     user_id: uuid.UUID,
 ) -> ExtendSessionResponse:
-    """Extend a practice-quota session by another ``practice_session_hours``.
+    """Extend an active personal or teaching-class machine session.
 
     Only allowed when:
     - Caller owns the resource
-    - VM is currently running
-    - ``auto_stop_reason == "practice_quota"`` (window-grace stops are not
-      extendable — the course window dictates that)
+    - An auto-stop is scheduled for either a practice quota or course window
+
+    The configured practice-session duration is added after the later of now
+    and the current stop time, so extending early never shortens the session.
     """
     resource = resource_repo.get_resource_by_vmid(session=session, vmid=vmid)
     if resource is None:
         raise BadRequestError("Resource not found")
     if resource.user_id != user_id:
         raise BadRequestError("Not the owner of this resource")
-    if resource.auto_stop_reason != "practice_quota":
+    request_id = getattr(resource, "request_id", None)
+    request = session.get(VMRequest, request_id) if request_id else None
+    if request and request.request_kind == "quick_template":
+        raise BadRequestError("Quick-practice sessions have a fixed time limit.")
+    if resource.auto_stop_reason not in {"practice_quota", "window_grace"}:
         raise BadRequestError(
-            "Session can only be extended during a practice (out-of-window) session."
+            "Session can only be extended while an automatic stop is scheduled."
         )
 
     policy = get_schedule_policy(session=session)
     now = _utc_now()
-    new_stop = now + timedelta(hours=policy.practice_session_hours)
+    current_stop = _ensure_utc(resource.auto_stop_at)
+    extension_base = max(now, current_stop) if current_stop else now
+    new_stop = extension_base + timedelta(hours=policy.practice_session_hours)
     resource_repo.set_auto_stop(
         session=session,
         vmid=vmid,
@@ -848,7 +1025,7 @@ def get_session_status(
 
     Reports whichever warning is more urgent:
     - ``warn_reason="auto_stop"``: VM has an ``auto_stop_at`` within the
-      configured warning window (group practice quota or course-window grace).
+      configured warning window (class practice quota or course-window grace).
     - ``warn_reason="expiry"``: VM's ``expiry_date`` is within
       ``policy.expiry_warning_hours`` (admin-configurable, defaults to 24 h).
 
@@ -859,6 +1036,11 @@ def get_session_status(
     running = resource_info.get("status") == "running"
     auto_stop_at = resource.auto_stop_at if resource else None
     auto_stop_reason = resource.auto_stop_reason if resource else None
+    request_id = getattr(resource, "request_id", None) if resource else None
+    request = session.get(VMRequest, request_id) if request_id else None
+    quick_practice_limited = bool(
+        request and request.request_kind == "quick_template"
+    )
 
     policy = get_schedule_policy(session=session)
 
@@ -898,9 +1080,13 @@ def get_session_status(
         hours_until_expiry=hours_until_expiry,
         should_warn=warn_reason is not None,
         warn_reason=warn_reason,
-        # Only practice-quota sessions can be extended via the button.
+        # Practice and teaching-window sessions can both be extended by the owner.
         # Expiry extensions go through spec_change_requests, not this endpoint.
-        can_extend=running and auto_stop_reason == "practice_quota",
+        can_extend=(
+            running
+            and not quick_practice_limited
+            and auto_stop_reason in {"practice_quota", "window_grace"}
+        ),
     )
 
 

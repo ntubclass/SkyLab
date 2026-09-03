@@ -8,18 +8,18 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic, perf_counter
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException
 
-from app.ai.template_recommendation.catalog_service import get_catalog
 from app.ai.template_recommendation.config import settings
 from app.ai.template_recommendation.node_service import (
     build_resource_option_bundle,
     load_live_device_nodes,
 )
 from app.ai.template_recommendation.prompt import (
-    build_chat_catalog_context,
     build_chat_runtime_context,
     build_chat_system_prompt,
+    build_intake_focus_block,
 )
 from app.ai.template_recommendation.recommendation_service import (
     generate_ai_plan,
@@ -33,10 +33,13 @@ from app.ai.template_recommendation.schemas import (
 )
 from app.ai.utils import apply_thinking_control, strip_think_tags
 from app.api.deps import CurrentUser, SessionDep
+from app.core.permissions import Permission, has_permission
 from app.infrastructure.ai.template_recommendation import client
 from app.repositories import vm_request as vm_request_repo
+from app.repositories import vm_template as vm_template_repo
 from app.services.llm_gateway import ai_gateway_service
 from app.services.proxmox import gpu_service
+from app.services.template import template_service
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,7 @@ _RESOURCE_OPTIONS_CACHE_TTL_SECONDS = 300.0
 _gpu_options_cache: dict[str, Any] = {"at": 0.0, "items": []}
 _live_nodes_cache: dict[str, Any] = {"at": 0.0, "items": []}
 _base_resource_options_cache: dict[str, Any] = {"at": 0.0, "items": None}
+_application_templates_cache: dict[str, Any] = {"at": 0.0, "items": None}
 
 router = APIRouter(
     prefix="/ai/template-recommendation",
@@ -142,22 +146,105 @@ def _build_resource_options_with_gpu(gpu_options: list[dict[str, Any]]) -> dict[
     return resource_options
 
 
+def _get_application_templates_cached(session: SessionDep) -> list[dict[str, Any]]:
+    """已開放的應用範本目錄。
+
+    目錄與使用者無關（開放與否是範本自己的旗標），所以整個程序共用一份快取；
+    來源一律由伺服器決定，不採用客戶端送來的清單，否則模型的候選會變成前端
+    可以偽造的東西。
+    """
+    now = monotonic()
+    cached_at = float(_application_templates_cache.get("at") or 0.0)
+    cached_items = _application_templates_cache.get("items")
+    if cached_items is not None and (now - cached_at) <= _RESOURCE_OPTIONS_CACHE_TTL_SECONDS:
+        return deepcopy(cached_items)
+    try:
+        catalog = template_service.list_student_catalog(session=session)
+    except Exception as exc:  # pragma: no cover - PVE 失敗不該擋住建議
+        logger.warning("Unable to load the application template catalog: %s", exc)
+        return []
+    items = [
+        {
+            "template_id": item.pve_vmid,
+            "name": item.name,
+            "description": item.description or "",
+            "resource_type": item.resource_type,
+            "cores": item.cores,
+            "memory_mb": item.memory_mb,
+            "disk_gb": item.disk_gb,
+        }
+        for item in catalog
+    ]
+    _application_templates_cache["at"] = now
+    _application_templates_cache["items"] = items
+    return deepcopy(items)
+
+
+def _allowed_vm_template_ids(
+    session: SessionDep,
+    user: CurrentUser,
+    application_templates: list[dict[str, Any]],
+) -> set[int]:
+    """使用者實際可以拿來申請的 VM 來源 id（PVE 讀不到時回空集合）。"""
+    base = _get_base_resource_options_cached().get("vm_operating_systems") or []
+    if not base:
+        return set()
+    allowed = {int(item.get("template_id") or 0) for item in base}
+    if not has_permission(user, Permission.TEMPLATE_MANAGE):
+        allowed -= vm_template_repo.registered_pve_vmids(session=session)
+    allowed |= {
+        int(item.get("template_id") or 0)
+        for item in application_templates
+        if str(item.get("resource_type")) != "lxc"
+    }
+    return allowed
+
+
 def _resolve_resource_options(
     request: ChatRequest,
     gpu_options: list[dict[str, Any]],
+    session: SessionDep,
+    user: CurrentUser,
 ) -> dict[str, Any]:
+    """候選清單必須跟使用者實際能選的一致。
+
+    母範本同時也是 PVE template，所以伺服器端組清單時要濾掉已註冊的範本，
+    再把開放申請的應用範本以獨立清單交給模型；否則模型會推薦到使用者根本
+    申請不到（甚至看不到）的來源。
+    """
     form_context = request.form_context
+    application_templates = _get_application_templates_cached(session)
     if form_context and form_context.resource_options_from_client:
+        client_vm_options = [
+            item.model_dump(mode="json") for item in form_context.vm_os_options
+        ]
+        allowed_vm_ids = _allowed_vm_template_ids(
+            session, user, application_templates
+        )
+        if allowed_vm_ids:
+            client_vm_options = [
+                item
+                for item in client_vm_options
+                if int(item.get("template_id") or 0) in allowed_vm_ids
+            ]
         return {
             "lxc_os_images": [
                 item.model_dump(mode="json") for item in form_context.lxc_os_options
             ],
-            "vm_operating_systems": [
-                item.model_dump(mode="json") for item in form_context.vm_os_options
-            ],
+            "vm_operating_systems": client_vm_options,
+            "application_templates": application_templates,
             "gpu_options": [dict(item) for item in gpu_options],
         }
-    return _build_resource_options_with_gpu(gpu_options)
+    resource_options = _build_resource_options_with_gpu(gpu_options)
+    if not has_permission(user, Permission.TEMPLATE_MANAGE):
+        registered = vm_template_repo.registered_pve_vmids(session=session)
+        resource_options["vm_operating_systems"] = [
+            item
+            for item in resource_options.get("vm_operating_systems") or []
+            if int(item.get("template_id") or 0) not in registered
+        ]
+    resource_options["application_templates"] = application_templates
+    return resource_options
 
 
 def _resolve_recommend_gpu_options(request: ChatRequest, *, requires_gpu: bool) -> list[dict[str, Any]]:
@@ -203,7 +290,9 @@ def _resolve_chat_gpu_options(request: ChatRequest, session: SessionDep) -> list
     for option in options:
         mapping_id = str(option.get("mapping_id") or "")
         reserved = int(reserved_counts.get(mapping_id, 0))
-        device_count = int(option.get("device_count") or 0)
+        capacity_count = int(
+            option.get("capacity_count") or option.get("device_count") or 0
+        )
         used_count = int(option.get("used_count") or 0)
         available_count = int(option.get("available_count") or 0)
         if reserved <= 0:
@@ -211,7 +300,7 @@ def _resolve_chat_gpu_options(request: ChatRequest, session: SessionDep) -> list
             continue
 
         updated = dict(option)
-        updated["used_count"] = min(device_count, used_count + reserved)
+        updated["used_count"] = min(capacity_count, used_count + reserved)
         updated["available_count"] = max(0, available_count - reserved)
         adjusted.append(updated)
 
@@ -229,13 +318,7 @@ async def chat(
             detail="AI model binding is missing in config/system-ai.json.",
         )
 
-    catalog = get_catalog()
     is_first_turn = len(request.messages) <= 1
-    catalog_context = build_chat_catalog_context(
-        catalog,
-        request.messages,
-        top_k=request.top_k,
-    )
     form_context = request.form_context
     gpu_options = _resolve_chat_gpu_options(request, session)
     runtime_context = (
@@ -261,9 +344,13 @@ async def chat(
     )
     system_prompt = build_chat_system_prompt(
         is_first_turn=is_first_turn,
-        catalog_context=catalog_context,
         runtime_context=runtime_context,
     )
+    # 配置模式：把這一輪的主題固定住，問句仍由顧問語氣產生
+    if request.focus_hint:
+        system_prompt = (
+            f"{system_prompt}\n\n{build_intake_focus_block(request.focus_hint.strip())}"
+        )
 
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     for msg in request.messages:
@@ -337,6 +424,12 @@ async def chat(
         except Exception:
             # 記錄失敗 log 時出錯不得掩蓋原始錯誤
             pass
+        if isinstance(exc, httpx.HTTPError):
+            logger.error("vLLM upstream error: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail="上游 AI 服務錯誤，請確認 vLLM 伺服器與模型設定（VLLM_BASE_URL / VLLM_MODEL_NAME）。",
+            ) from exc
         raise
 
 
@@ -370,13 +463,13 @@ async def recommend(
         top_k=request.top_k,
     )
 
-    catalog = get_catalog()
-    resource_options = _resolve_resource_options(request, gpu_options)
+    resource_options = _resolve_resource_options(
+        request, gpu_options, session, current_user
+    )
 
     try:
         ai_result, ai_metrics = await generate_ai_plan(
             merged_request,
-            catalog,
             request.messages,
             resource_options=resource_options,
         )
@@ -393,7 +486,6 @@ async def recommend(
             ai_result,
             merged_request,
             merged_request.device_nodes,
-            catalog,
             resource_options=resource_options,
         )
         result["live_device_nodes"] = [
@@ -434,6 +526,12 @@ async def recommend(
         except Exception:
             # 記錄失敗 log 時出錯不得掩蓋原始錯誤
             pass
+        if isinstance(exc, httpx.HTTPError):
+            logger.error("vLLM upstream error: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail="上游 AI 服務錯誤，請確認 vLLM 伺服器與模型設定（VLLM_BASE_URL / VLLM_MODEL_NAME）。",
+            ) from exc
         raise
 
 

@@ -1,9 +1,10 @@
-﻿import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth }  from "../../contexts/AuthContext";
 import styles from "./Sidebar.module.scss";
 import MIcon from "../MIcon";
 import Avatar from "../Avatar/Avatar";
+import JobsButton from "../Jobs/JobsButton";
 
 const topItems = [
   { key: "dashboard", label: "首頁", icon: "dashboard" },
@@ -11,22 +12,15 @@ const topItems = [
 
 const navGroups = [
   {
-    key: "apply",
-    label: "申請",
-    icon: "edit_note",
-    items: [
-      { key: "my-requests", label: "我的申請",    icon: "assignment" },
-    ],
-  },
-  {
     key: "resource",
     label: "資源",
     icon: "storage",
     items: [
       { key: "my-resources",  label: "我的資源",    icon: "inventory_2" },
-      { key: "resource-mgmt", label: "資源管理",    icon: "storage" },
-      { key: "templates",     label: "模板管理",    icon: "library_books" },
-      { key: "gpu-mgmt",      label: "GPU 管理",    icon: "memory" },
+      { key: "my-requests",   label: "我的申請",    icon: "assignment" },
+      { key: "resource-mgmt", label: "資源管理",    icon: "storage", adminOnly: true },
+      { key: "templates",     label: "機器母範本",  icon: "library_books", instructorOnly: true },
+      { key: "gpu-mgmt",      label: "GPU 管理",    icon: "memory", adminOnly: true },
     ],
   },
   {
@@ -34,8 +28,8 @@ const navGroups = [
     label: "審核",
     icon: "fact_check",
     items: [
-      { key: "request-review", label: "申請審核", icon: "fact_check" },
-      { key: "batch-review",   label: "批量審核", icon: "library_add_check" },
+      { key: "request-review", label: "申請審核", icon: "fact_check", adminOnly: true },
+      { key: "batch-review",   label: "批量審核", icon: "library_add_check", adminOnly: true },
     ],
   },
   {
@@ -45,9 +39,6 @@ const navGroups = [
     items: [
       { key: "firewall",      label: "防火牆",     icon: "security" },
       { key: "reverse-proxy", label: "反向代理",   icon: "swap_horiz" },
-      { key: "domain",        label: "網域管理",   icon: "domain" },
-      { key: "ip-management", label: "IP 管理",    icon: "lan" },
-      { key: "gateway",       label: "閘道 VM",    icon: "dns" },
     ],
   },
   {
@@ -59,6 +50,7 @@ const navGroups = [
       { key: "ai-api-review", label: "申請審核", icon: "rate_review", adminOnly: true },
       { key: "ai-api-keys",   label: "金鑰管理", icon: "vpn_key", adminOnly: true },
       { key: "ai-monitoring", label: "使用監控", icon: "monitor_heart", adminOnly: true },
+      /* PVE 維運助手不放側欄：管理者首頁就是它的入口，那裡同時看得到待處理的問題 */
     ],
   },
   {
@@ -66,11 +58,10 @@ const navGroups = [
     label: "教學",
     icon: "school",
     items: [
-      { key: "class-management", label: "班級管理（待開發）", icon: "groups_2" },
-      { key: "course-template-management", label: "上課機器模板（待開發）", icon: "view_quilt" },
-      { key: "classroom",  label: "虛擬教室", icon: "cast_for_education" },
-      { key: "teaching",   label: "教學面板", icon: "grid_view" },
-      { key: "courses",    label: "課程學習", icon: "flag" },
+      { key: "class-setup", label: "一鍵建立班級", icon: "add_circle", instructorOnly: true },
+      { key: "class-management", label: "班級管理", icon: "groups_2", instructorOnly: true },
+      { key: "course-template-management", label: "多機環境模板", icon: "view_quilt", instructorOnly: true },
+      { key: "courses",    label: "課程學習（非正式）", icon: "flag" },
     ],
   },
   {
@@ -78,10 +69,12 @@ const navGroups = [
     label: "系統管理",
     icon: "tune",
     items: [
-      { key: "groups",        label: "群組",       icon: "groups" },
-      { key: "admin",         label: "使用者管理", icon: "admin_panel_settings" },
-      { key: "quotas",        label: "配額管理",   icon: "data_usage" },
-      { key: "settings",      label: "系統設定",   icon: "settings" },
+      { key: "admin",         label: "使用者管理", icon: "admin_panel_settings", adminOnly: true },
+      { key: "quotas",        label: "配額管理",   icon: "data_usage", adminOnly: true },
+      { key: "ip-management", label: "IP 管理",    icon: "lan", adminOnly: true },
+      { key: "domain",        label: "網域管理",   icon: "domain", adminOnly: true },
+      { key: "gateway",       label: "閘道 VM",    icon: "dns", adminOnly: true },
+      { key: "settings",      label: "系統設定",   icon: "settings", adminOnly: true },
     ],
   },
   {
@@ -89,10 +82,9 @@ const navGroups = [
     label: "監控與日誌",
     icon: "insights",
     items: [
-      { key: "monitoring",    label: "資源監控",       icon: "monitor_heart" },
+      { key: "monitoring",    label: "資源監控",       icon: "monitor_heart", adminOnly: true },
       { key: "jobs",          label: "背景任務",       icon: "task_alt" },
-      { key: "deploy-logs",   label: "部署日誌",       icon: "terminal" },
-      { key: "audit",         label: "Audit Logs",     icon: "receipt_long" },
+      { key: "audit",         label: "稽核日誌",     icon: "receipt_long", adminOnly: true },
     ],
   },
 ];
@@ -120,6 +112,8 @@ function NavGroup({ group, active, onSelect, collapsed, onExpand }) {
         className={`${styles.groupHeader} ${hasActive ? styles.groupHeaderActive : ""}`}
         onClick={handleHeaderClick}
         title={collapsed ? group.label : undefined}
+        aria-label={group.label}
+        aria-expanded={!collapsed && open}
       >
         <MIcon name={group.icon} size={20} />
         {!collapsed && (
@@ -142,6 +136,7 @@ function NavGroup({ group, active, onSelect, collapsed, onExpand }) {
               type="button"
               className={`${styles.navItem} ${active === item.key ? styles.active : ""}`}
               onClick={() => onSelect(item.key)}
+              aria-label={item.label}
             >
               <span className={styles.navLabel}>{item.label}</span>
             </button>
@@ -201,7 +196,8 @@ function SelectPopup({ options, value, onSelect, onClose, triggerRef, closing })
         <button
           key={opt.key}
           type="button"
-          className={`${styles.appearanceOption} ${value === opt.key ? styles.appearanceOptionActive : ""}`}
+          className={`${styles.appearanceOption} ${value === opt.key ? styles.appearanceOptionActive : ""} ${opt.disabled ? styles.appearanceOptionDisabled : ""}`}
+          disabled={opt.disabled}
           onClick={() => { onSelect(opt.key); onClose(); }}
         >
           {opt.flag
@@ -209,6 +205,7 @@ function SelectPopup({ options, value, onSelect, onClose, triggerRef, closing })
             : <MIcon name={opt.icon} size={18} />
           }
           <span>{opt.label}</span>
+          {opt.hint && <span className={styles.optionHint}>{opt.hint}</span>}
         </button>
       ))}
     </div>
@@ -254,10 +251,11 @@ function UserPopup({ user, onLogout, onSettings, onClose, triggerRef, closing })
   );
 }
 
+// 介面尚未接 i18n，僅繁體中文可用；其餘語言待字串抽取完成後開放
 const LANG_OPTIONS = [
   { key: "zh-TW", label: "繁體中文", flag: "🇹🇼" },
-  { key: "en",    label: "English",  flag: "🇬🇧" },
-  { key: "ja",    label: "日本語",   flag: "🇯🇵" },
+  { key: "en",    label: "English",  flag: "🇬🇧", disabled: true, hint: "即將推出" },
+  { key: "ja",    label: "日本語",   flag: "🇯🇵", disabled: true, hint: "即將推出" },
 ];
 
 export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
@@ -271,10 +269,13 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
   const userBtnRef = useRef(null);
   const { user, logout } = useAuth();
   const isAdmin = Boolean(user?.is_superuser || user?.role === "admin");
+  const canTeach = isAdmin || user?.role === "teacher";
   const visibleNavGroups = navGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => !item.adminOnly || isAdmin),
+      items: group.items.filter((item) =>
+        (!item.adminOnly || isAdmin) && (!item.instructorOnly || canTeach)
+      ),
     }))
     .filter((group) => group.items.length > 0);
 
@@ -294,7 +295,7 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
   return (
     <aside className={cls}>
       {/* ===== Brand ===== */}
-      <div className={styles.brand} onClick={() => window.innerWidth >= 768 && onToggle?.()}>
+      <div className={styles.brand} onClick={() => window.innerWidth >= 1024 && onToggle?.()}>
         <span className={styles.brandIcon}>
           <img src="/favicon.png" alt="SkyLab" />
         </span>
@@ -316,6 +317,7 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
             className={`${styles.navItem} ${active === item.key ? styles.active : ""}`}
             onClick={() => handleNav(item.key)}
             title={collapsed ? item.label : undefined}
+            aria-label={item.label}
           >
             <MIcon name={item.icon} size={20} />
             {!collapsed && <span className={styles.navLabel}>{item.label}</span>}
@@ -335,6 +337,9 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
 
       {/* ===== Bottom section ===== */}
       <div className={styles.bottom}>
+        {/* 背景任務（全站入口，狀態由 DashboardLayout 的 JobsProvider 提供） */}
+        <JobsButton collapsed={collapsed} />
+
         {/* 語言選擇 */}
         <div className={styles.appearanceWrap}>
           {langPopup.open && (
@@ -353,6 +358,8 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
             className={`${styles.navItem} ${langPopup.open && !langPopup.closing ? styles.active : ""}`}
             onClick={langPopup.toggle}
             title={collapsed ? "語言" : undefined}
+            aria-label="語言 / Language"
+            aria-expanded={langPopup.open}
           >
             <MIcon name="language" size={20} />
             {!collapsed && <span className={styles.navLabel}>語言 / Language</span>}
@@ -378,6 +385,8 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
             className={`${styles.user} ${userPopup.open && !userPopup.closing ? styles.userActive : ""}`}
             onClick={userPopup.toggle}
             title={collapsed ? (user?.full_name ?? user?.email) : undefined}
+            aria-label={`使用者選單：${user?.full_name ?? user?.email ?? ""}`}
+            aria-expanded={userPopup.open}
           >
             <Avatar user={user} size={32} className={styles.avatar} />
             {!collapsed && (

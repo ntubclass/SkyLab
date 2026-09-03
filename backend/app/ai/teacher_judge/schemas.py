@@ -12,6 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.ai.teacher_judge.template_command_service import SUPPORTED_TEMPLATE_KEYS
+
 
 class TeacherJudgeRubricCheckStep(BaseModel):
     """評分計劃書中的 command catalog 引用。"""
@@ -58,6 +60,10 @@ class TeacherJudgeRubricAnalysis(BaseModel):
     auto_count: int = Field(default=0)
     partial_count: int = Field(default=0)
     manual_count: int = Field(default=0)
+    detectability_needs_review: bool = Field(
+        default=False,
+        description="評分項目異動後，既有可偵測性結果是否需要重新評估。",
+    )
     summary: str = Field(default="", description="AI 整體說明（繁體中文）")
     raw_text: str = Field(
         default="", description="解析後的原始文件文字（供後續對話使用）"
@@ -79,7 +85,7 @@ class TeacherJudgeRubricChatRequest(BaseModel):
         default="", description="目前評分表的 JSON 字串（作為背景知識）"
     )
     is_refine: bool = Field(
-        default=False, description="True = 老師手動調整後觸發的全表潤飾模式"
+        default=False, description="True = 以目前評分表執行整表潤飾模式"
     )
     template_key: str = Field(
         default="linux",
@@ -126,6 +132,130 @@ TeacherJudgeScriptRunTargetScopeLiteral = Literal[
 TeacherJudgeScriptRunStatusLiteral = Literal[
     "pending", "running", "completed", "failed", "cancelled"
 ]
+TeacherJudgeSessionStatusLiteral = Literal["active", "archived"]
+TeacherJudgeMessageRoleLiteral = Literal["user", "assistant"]
+TeacherJudgeMessageTypeLiteral = Literal["chat", "rubric_proposal", "system_notice"]
+TeacherJudgeSessionCreationModeLiteral = Literal["blank", "existing"]
+TeacherJudgeFileSourceTypeLiteral = Literal["uploaded", "created"]
+
+
+class TeacherJudgeSessionCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    teaching_class_week_id: uuid.UUID | None = None
+    selected_file_id: uuid.UUID | None = None
+    creation_mode: TeacherJudgeSessionCreationModeLiteral | None = None
+    rubric_name: str | None = Field(default=None, max_length=255)
+    environment_keys: list[str] | None = None
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        title = value.strip()
+        if not title:
+            raise ValueError("title must not be blank")
+        return title
+
+    @field_validator("rubric_name")
+    @classmethod
+    def validate_rubric_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        name = value.strip()
+        if not name:
+            raise ValueError("rubric_name must not be blank")
+        return name
+
+    @field_validator("environment_keys")
+    @classmethod
+    def normalize_environment_keys(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized = list(dict.fromkeys(str(key).strip().lower() for key in value if str(key).strip()))
+        if any(key not in SUPPORTED_TEMPLATE_KEYS for key in normalized):
+            raise ValueError("environment_keys contains an unsupported environment")
+        return normalized
+
+    def model_post_init(self, __context: Any) -> None:
+        # ``creation_mode=None`` intentionally preserves the legacy contract:
+        # callers may create a session with only title/selected_file_id.
+        if self.creation_mode == "blank":
+            if self.selected_file_id is not None:
+                raise ValueError("blank creation must not include selected_file_id")
+            if not self.rubric_name:
+                raise ValueError("blank creation requires rubric_name")
+            if not self.environment_keys:
+                raise ValueError("blank creation requires environment_keys")
+        elif self.creation_mode == "existing":
+            if self.selected_file_id is None:
+                raise ValueError("existing creation requires selected_file_id")
+            if self.rubric_name is not None or self.environment_keys is not None:
+                raise ValueError("existing creation must not include blank rubric fields")
+
+
+class TeacherJudgeSessionUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    teaching_class_week_id: uuid.UUID | None = None
+    selected_file_id: uuid.UUID | None = None
+    status: TeacherJudgeSessionStatusLiteral | None = None
+    is_pinned: bool | None = None
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        title = value.strip()
+        if not title:
+            raise ValueError("title must not be blank")
+        return title
+
+
+class TeacherJudgeSessionPublic(BaseModel):
+    id: str
+    teaching_class_id: str
+    teaching_class_week_id: str | None = None
+    title: str
+    status: TeacherJudgeSessionStatusLiteral
+    selected_file_id: str | None
+    selected_file_name: str | None = None
+    selected_file_item_count: int | None = None
+    template_key: str | None = None
+    summary: str
+    message_count: int = 0
+    script_count: int = 0
+    run_count: int = 0
+    created_by: str | None
+    created_at: str
+    updated_at: str
+    last_activity_at: str
+    pinned_at: str | None = None
+
+
+class TeacherJudgeSessionMessageCreateRequest(BaseModel):
+    content: str = Field(..., min_length=1, max_length=20000)
+    analysis_revision: int | None = Field(default=None, ge=1)
+    is_refine: bool = Field(
+        default=False,
+        description="True = 以目前評分表執行整表潤飾",
+    )
+
+
+class TeacherJudgeSessionMessagePublic(BaseModel):
+    id: str
+    session_id: str
+    role: TeacherJudgeMessageRoleLiteral
+    content: str
+    message_type: TeacherJudgeMessageTypeLiteral
+    metadata_json: dict[str, Any]
+    created_by: str | None
+    created_at: str
+
+
+class TeacherJudgeSessionChatResponse(BaseModel):
+    user_message: TeacherJudgeSessionMessagePublic
+    assistant_message: TeacherJudgeSessionMessagePublic
+    rubric_proposal: list[dict[str, Any]] | None = None
+    base_revision: int | None = None
 
 
 class TeacherJudgeScriptCreateRequest(BaseModel):
@@ -158,7 +288,8 @@ class TeacherJudgeScriptRegenerateRequest(BaseModel):
 
 class TeacherJudgeScriptArtifactPublic(BaseModel):
     id: str
-    group_id: str
+    teaching_class_id: str
+    session_id: str | None = None
     name: str
     template_key: str
     rubric_snapshot_json: dict[str, Any]
@@ -180,15 +311,42 @@ class TeacherJudgeScriptArtifactPublic(BaseModel):
 
 class TeacherJudgeFilePublic(BaseModel):
     id: str
-    group_id: str
+    teaching_class_id: str
     uploaded_by: str | None
-    original_filename: str
-    file_hash: str
+    original_filename: str | None
+    file_hash: str | None
     template_key: str
+    source_type: TeacherJudgeFileSourceTypeLiteral = "uploaded"
+    display_name: str
+    environment_keys: list[str] = Field(default_factory=list)
+    analysis_revision: int = 1
     analysis_json: dict[str, Any]
     status: TeacherJudgeFileStatusLiteral
     created_at: str
     updated_at: str
+
+
+class TeacherJudgeFileCreateRequest(BaseModel):
+    """Create a class-scoped rubric asset without uploading a document."""
+
+    display_name: str = Field(..., min_length=1, max_length=255)
+    environment_keys: list[str] = Field(..., min_length=1)
+
+    @field_validator("display_name")
+    @classmethod
+    def normalize_create_display_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("display_name must not be blank")
+        return name
+
+    @field_validator("environment_keys")
+    @classmethod
+    def normalize_create_environment_keys(cls, value: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(str(key).strip().lower() for key in value if str(key).strip()))
+        if not normalized or any(key not in SUPPORTED_TEMPLATE_KEYS for key in normalized):
+            raise ValueError("environment_keys must contain supported environments")
+        return normalized
 
 
 class TeacherJudgeFileUploadResponse(BaseModel):
@@ -200,6 +358,57 @@ class TeacherJudgeFileUploadResponse(BaseModel):
 
 class TeacherJudgeFileAnalysisUpdateRequest(BaseModel):
     analysis: TeacherJudgeRubricAnalysis
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class TeacherJudgeFileMetadataUpdateRequest(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=255)
+    environment_keys: list[str] | None = None
+    template_key: str | None = Field(default=None, max_length=50)
+
+    @field_validator("display_name")
+    @classmethod
+    def normalize_display_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        name = value.strip()
+        if not name:
+            raise ValueError("display_name must not be blank")
+        return name
+
+    @field_validator("environment_keys")
+    @classmethod
+    def normalize_metadata_environment_keys(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized = list(dict.fromkeys(str(key).strip().lower() for key in value if str(key).strip()))
+        if not normalized or any(key not in SUPPORTED_TEMPLATE_KEYS for key in normalized):
+            raise ValueError("environment_keys must contain supported environments")
+        return normalized
+
+    @field_validator("template_key")
+    @classmethod
+    def normalize_metadata_template_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        key = value.strip().lower()
+        if key not in SUPPORTED_TEMPLATE_KEYS:
+            raise ValueError("template_key contains an unsupported environment")
+        return key
+
+
+class TeacherJudgeSessionForkRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_fork_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        title = value.strip()
+        if not title:
+            raise ValueError("title must not be blank")
+        return title
 
 
 class TeacherJudgeScriptRunCreateRequest(BaseModel):
@@ -219,7 +428,7 @@ class TeacherJudgeScriptRunCreateRequest(BaseModel):
 
 class TeacherJudgeScriptRunPublic(BaseModel):
     id: str
-    group_id: str
+    teaching_class_id: str
     artifact_id: str
     target_scope: TeacherJudgeScriptRunTargetScopeLiteral
     target_snapshot_json: dict[str, Any]
@@ -228,6 +437,19 @@ class TeacherJudgeScriptRunPublic(BaseModel):
     result_summary_json: dict[str, Any]
     target_results_json: dict[str, Any]
     started_by: str | None
+    started_at: str | None
+    finished_at: str | None
+    created_at: str
+    updated_at: str
+
+
+class TeacherJudgeScriptRunSummary(BaseModel):
+    id: str
+    teaching_class_id: str
+    artifact_id: str
+    status: TeacherJudgeScriptRunStatusLiteral
+    progress_json: dict[str, Any]
+    result_summary_json: dict[str, Any]
     started_at: str | None
     finished_at: str | None
     created_at: str

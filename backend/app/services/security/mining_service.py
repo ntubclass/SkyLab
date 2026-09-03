@@ -1,7 +1,7 @@
 """反挖礦偵測掃描與兩段式處置的 I/O 協調層。
 
 決策由 ``mining_policy`` 純函式產生；本模組負責 RRD 抽樣、快照存證、
-暫停 VM、告警與通知、以及管理員的 ban/dismiss 審核動作。
+暫停 VM、警告與通知、以及管理員的 ban/dismiss 審核動作。
 
 處置順序鐵律：快照存證為 best-effort（60 秒逾時、失敗只記 log），
 **絕不阻塞暫停** — 暫停才是止血動作。
@@ -22,11 +22,11 @@ from app.models import (
     AlertEvent,
     AlertMetric,
     AlertScope,
-    Group,
-    GroupMember,
     MiningIncident,
     MiningIncidentStatus,
     Resource,
+    TeachingClass,
+    TeachingClassStudent,
     User,
 )
 from app.repositories import governance as governance_repo
@@ -241,12 +241,18 @@ def _create_alert_event(
 
 
 def _teacher_emails(session: Session, user_id: uuid.UUID) -> list[str]:
-    """使用者所屬全部群組的 owner（老師）email。"""
+    """使用者所屬正式班級的老師 email。"""
     stmt = (
         select(User.email)
-        .join(Group, Group.owner_id == User.id)  # type: ignore[arg-type]
-        .join(GroupMember, GroupMember.group_id == Group.id)  # type: ignore[arg-type]
-        .where(GroupMember.user_id == user_id, User.is_active == True)  # noqa: E712
+        .join(TeachingClass, TeachingClass.owner_id == User.id)  # type: ignore[arg-type]
+        .join(
+            TeachingClassStudent,
+            TeachingClassStudent.class_id == TeachingClass.id,
+        )
+        .where(
+            TeachingClassStudent.user_id == user_id,
+            User.is_active == True,  # noqa: E712
+        )
     )
     return [str(e) for e in session.exec(stmt).all() if e]
 
@@ -291,10 +297,10 @@ def respond_to_incident(
     *,
     now: datetime,
 ) -> None:
-    """自動段處置：存證 → 暫停 → 告警 → 通知。
+    """自動段處置：存證 → 暫停 → 警告 → 通知。
 
     ``mining_auto_suspend=False`` 時跳過存證與暫停（事件停留 detected，
-    仍發告警與通知，處置全人工）。
+    仍發警告與通知，處置全人工）。
     """
     if config.mining_auto_suspend:
         incident.snapshot_name = _snapshot_evidence(incident, now=now)

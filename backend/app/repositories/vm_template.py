@@ -6,10 +6,7 @@ from datetime import datetime, timezone
 from sqlmodel import Session, col, or_, select
 
 from app.models import (
-    Group,
-    GroupMember,
     VMTemplate,
-    VMTemplateGroupLink,
     VMTemplateStatus,
     VMTemplateVisibility,
 )
@@ -25,10 +22,11 @@ def create_template(
     resource_type: str,
     description: str | None = None,
     storage: str | None = None,
-    visibility: VMTemplateVisibility = VMTemplateVisibility.groups,
+    visibility: VMTemplateVisibility = VMTemplateVisibility.private,
     default_cores: int | None = None,
     default_memory: int | None = None,
-    default_disk: int | None = None,
+    allow_password_change: bool = True,
+    student_requestable: bool = False,
     source_vmid: int | None = None,
     commit: bool = True,
 ) -> VMTemplate:
@@ -43,7 +41,8 @@ def create_template(
         visibility=visibility,
         default_cores=default_cores,
         default_memory=default_memory,
-        default_disk=default_disk,
+        allow_password_change=allow_password_change,
+        student_requestable=student_requestable,
         source_vmid=source_vmid,
     )
     session.add(template)
@@ -62,11 +61,63 @@ def get_template(
 
 
 def get_template_by_pve_vmid(
-    *, session: Session, pve_vmid: int
+    *, session: Session, pve_vmid: int, include_deleted: bool = False
 ) -> VMTemplate | None:
-    return session.exec(
-        select(VMTemplate).where(VMTemplate.pve_vmid == pve_vmid)
-    ).first()
+    stmt = select(VMTemplate).where(VMTemplate.pve_vmid == pve_vmid)
+    if not include_deleted:
+        stmt = stmt.where(VMTemplate.status != VMTemplateStatus.deleted)
+    return session.exec(stmt).first()
+
+
+def revive_deleted_template(
+    *,
+    session: Session,
+    template: VMTemplate,
+    name: str,
+    owner_id: uuid.UUID,
+    node: str,
+    resource_type: str,
+    description: str | None = None,
+    visibility: VMTemplateVisibility = VMTemplateVisibility.private,
+    default_cores: int | None = None,
+    default_memory: int | None = None,
+    allow_password_change: bool = True,
+    student_requestable: bool = False,
+    source_vmid: int | None = None,
+    commit: bool = True,
+) -> VMTemplate:
+    """復用軟刪除紀錄重新開始範本生命週期。
+
+    pve_vmid 有 unique 約束、刪除又是軟刪除，PVE 回收重用 VMID 後
+    只能覆寫原紀錄，否則該 VMID 永遠無法再註冊成範本。
+    """
+    now = datetime.now(timezone.utc)
+    template.name = name
+    template.description = description
+    template.owner_id = owner_id
+    template.node = node
+    template.storage = None
+    template.resource_type = resource_type
+    template.status = VMTemplateStatus.creating
+    template.visibility = visibility
+    template.default_cores = default_cores
+    template.default_memory = default_memory
+    template.default_disk = None
+    template.allow_password_change = allow_password_change
+    template.student_requestable = student_requestable
+    template.icon_url = None
+    template.source_vmid = source_vmid
+    template.version = 1
+    template.error_message = None
+    template.created_at = now
+    template.updated_at = now
+    session.add(template)
+    if commit:
+        session.commit()
+    else:
+        session.flush()
+    session.refresh(template)
+    return template
 
 
 def list_all_templates(
@@ -85,17 +136,7 @@ def list_visible_templates(
     user_id: uuid.UUID,
     only_ready: bool = False,
 ) -> list[VMTemplate]:
-    """非 admin 的可見範圍：自己擁有的、全域的、或所屬/擁有群組綁定的範本。"""
-    member_group_ids = select(GroupMember.group_id).where(
-        GroupMember.user_id == user_id
-    )
-    owned_group_ids = select(Group.id).where(Group.owner_id == user_id)
-    linked_template_ids = select(VMTemplateGroupLink.template_id).where(
-        or_(
-            col(VMTemplateGroupLink.group_id).in_(member_group_ids),
-            col(VMTemplateGroupLink.group_id).in_(owned_group_ids),
-        )
-    )
+    """非 admin 只看自己擁有的範本，或所有人可見的範本。"""
     stmt = (
         select(VMTemplate)
         .where(VMTemplate.status != VMTemplateStatus.deleted)
@@ -103,7 +144,6 @@ def list_visible_templates(
             or_(
                 VMTemplate.owner_id == user_id,
                 VMTemplate.visibility == VMTemplateVisibility.global_,
-                col(VMTemplate.id).in_(linked_template_ids),
             )
         )
     )
@@ -112,40 +152,25 @@ def list_visible_templates(
     stmt = stmt.order_by(col(VMTemplate.created_at).desc())
     return list(session.exec(stmt).all())
 
-
-def get_group_ids(
-    *, session: Session, template_id: uuid.UUID
-) -> list[uuid.UUID]:
-    stmt = select(VMTemplateGroupLink.group_id).where(
-        VMTemplateGroupLink.template_id == template_id
+def list_student_catalog(*, session: Session) -> list[VMTemplate]:
+    """Templates a student may pick in the ordinary request form."""
+    stmt = (
+        select(VMTemplate)
+        .where(
+            VMTemplate.status == VMTemplateStatus.ready,
+            VMTemplate.student_requestable == True,  # noqa: E712
+        )
+        .order_by(col(VMTemplate.name))
     )
     return list(session.exec(stmt).all())
 
 
-def set_group_links(
-    *,
-    session: Session,
-    template_id: uuid.UUID,
-    group_ids: list[uuid.UUID],
-    commit: bool = True,
-) -> None:
-    existing = session.exec(
-        select(VMTemplateGroupLink).where(
-            VMTemplateGroupLink.template_id == template_id
-        )
-    ).all()
-    wanted = set(group_ids)
-    for link in existing:
-        if link.group_id not in wanted:
-            session.delete(link)
-        else:
-            wanted.discard(link.group_id)
-    for group_id in wanted:
-        session.add(
-            VMTemplateGroupLink(template_id=template_id, group_id=group_id)
-        )
-    if commit:
-        session.commit()
+def registered_pve_vmids(*, session: Session) -> set[int]:
+    """PVE VMIDs already registered as platform templates (any live status)."""
+    stmt = select(VMTemplate.pve_vmid).where(
+        VMTemplate.status != VMTemplateStatus.deleted
+    )
+    return {int(vmid) for vmid in session.exec(stmt).all()}
 
 
 def touch(*, session: Session, template: VMTemplate, commit: bool = True) -> None:
@@ -155,34 +180,10 @@ def touch(*, session: Session, template: VMTemplate, commit: bool = True) -> Non
         session.commit()
         session.refresh(template)
 
-
-def get_groups_by_ids(
-    *, session: Session, group_ids: list[uuid.UUID]
-) -> list[Group]:
-    if not group_ids:
-        return []
-    stmt = select(Group).where(col(Group.id).in_(group_ids))
-    return list(session.exec(stmt).all())
-
-
 def is_template_visible_to_user(
-    *, session: Session, template: VMTemplate, user_id: uuid.UUID
+    *, template: VMTemplate, user_id: uuid.UUID
 ) -> bool:
-    if template.owner_id == user_id:
-        return True
-    if template.visibility == VMTemplateVisibility.global_:
-        return True
-    linked_groups = get_group_ids(session=session, template_id=template.id)
-    if not linked_groups:
-        return False
-    member_stmt = select(GroupMember.group_id).where(
-        GroupMember.user_id == user_id,
-        col(GroupMember.group_id).in_(linked_groups),
+    return (
+        template.owner_id == user_id
+        or template.visibility == VMTemplateVisibility.global_
     )
-    if session.exec(member_stmt).first() is not None:
-        return True
-    owner_stmt = select(Group.id).where(
-        Group.owner_id == user_id,
-        col(Group.id).in_(linked_groups),
-    )
-    return session.exec(owner_stmt).first() is not None

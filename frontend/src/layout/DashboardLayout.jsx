@@ -1,22 +1,39 @@
-﻿import { createContext, useEffect, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { Suspense } from "react";
 import MIcon from "../components/MIcon";
+import LoadingState from "../components/LoadingState/LoadingState";
 import Sidebar from "../components/Sidebar/Sidebar";
 import AiFloatingChat from "../components/AiFloatingChat/AiFloatingChat";
 import ClassroomStudentLayer from "../components/Classroom/ClassroomStudentLayer";
+import JobsProvider from "../components/Jobs/JobsProvider";
+import SubnetBanner from "../components/SubnetBanner/SubnetBanner";
+import SessionWarningDialog from "../components/SessionWarning/SessionWarningDialog";
+import useSessionWarning from "../hooks/useSessionWarning";
+import useDialogPresence from "../hooks/useDialogPresence";
 import ErrorBoundary from "../components/ErrorBoundary/ErrorBoundary";
+import UserGuide from "../components/UserGuide/UserGuide";
+import { LayoutContext } from "./layoutContext";
 import styles from "./DashboardLayout.module.scss";
 
-export const LayoutContext = createContext({ setCompactFooter: () => {} });
+export { LayoutContext };
 
-const COLLAPSE_MIN_WIDTH = 1280;
+
+const COLLAPSE_MIN_WIDTH = 1024;
 
 export default function DashboardLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [compactFooter, setCompactFooter] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [requestForm, setRequestForm] = useState(null);
+  const registerRequestForm = useCallback((api) => setRequestForm(api ?? null), []);
+  const layoutValue = useMemo(
+    () => ({ setCompactFooter, registerRequestForm, requestForm }),
+    [registerRequestForm, requestForm],
+  );
+  const { active: sessionWarning, dismiss, dismissPermanent } = useSessionWarning();
+  const mobileOverlay = useDialogPresence(mobileOpen);
 
   useEffect(() => {
     function handleResize() {
@@ -31,11 +48,13 @@ export default function DashboardLayout() {
   }, []);
 
   return (
-    <LayoutContext.Provider value={{ setCompactFooter }}>
-    <div className={`${styles.layout} ${collapsed ? styles.collapsed : ""}`}>
-      {mobileOpen && (
+    <LayoutContext.Provider value={layoutValue}>
+    {/* 任務狀態全站常駐（WS + toast + 詳情 dialog）；顯示按鈕在 Sidebar 底部 */}
+    <JobsProvider>
+    <div className={styles.layout}>
+      {mobileOverlay.open && (
         <div
-          className={styles.overlay}
+          className={`${styles.overlay} ${mobileOverlay.closing ? styles.overlayOut : ""}`}
           onClick={() => setMobileOpen(false)}
         />
       )}
@@ -62,11 +81,19 @@ export default function DashboardLayout() {
                   <MIcon name="segment" size={22} />
                 </button>
               </div>
+              <SubnetBanner />
               <ErrorBoundary>
-                <Suspense fallback={<div className={styles.routeLoading}>載入頁面中…</div>}>
+                <Suspense
+                  fallback={
+                    <div className={styles.routeLoading}>
+                      <LoadingState text="載入頁面中…" />
+                    </div>
+                  }
+                >
                   <Outlet />
                 </Suspense>
               </ErrorBoundary>
+              <UserGuide />
               <div className={`${styles.footer} ${compactFooter ? styles.footerCompact : ""}`}>SkyLab · 2026</div>
             </div>
             <AiFloatingChat
@@ -74,9 +101,15 @@ export default function DashboardLayout() {
               onOpenChange={setAssistantOpen}
             />
           </div>
+          <SessionWarningDialog
+            status={sessionWarning}
+            onClose={dismiss}
+            onDismissPermanent={dismissPermanent}
+          />
         </ClassroomStudentLayer>
       </main>
     </div>
+    </JobsProvider>
     </LayoutContext.Provider>
   );
 }

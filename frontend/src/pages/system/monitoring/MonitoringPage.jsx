@@ -1,10 +1,13 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import styles from "./MonitoringPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import LoadingState from "../../../components/LoadingState/LoadingState";
+import EmptyState from "../../../components/EmptyState/EmptyState";
 import RrdChart from "../../../components/RrdChart/RrdChart";
 import MiningIncidentsPanel from "./MiningIncidentsPanel";
 import { MonitoringService } from "../../../services/monitoring";
 import { useToast } from "../../../hooks/useToast";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 const TIMEFRAMES = [
   { value: "hour", label: "最近 1 小時" },
@@ -67,21 +70,18 @@ function UsageBar({ pct }) {
   );
 }
 
-function OverviewCard({ title, icon, pct, detail }) {
+function OverviewCard({ title, pct, detail }) {
   return (
     <div className={styles.overviewCard}>
       <div className={styles.overviewTop}>
         <div className={styles.overviewInfo}>
           <span className={styles.overviewLabel}>{title}</span>
-          <span className={styles.overviewValue}>
-            {pct.toFixed(1)}
-            <span className={styles.overviewUnit}>%</span>
-          </span>
           <span className={styles.overviewDetail}>{detail}</span>
         </div>
-        <div className={styles.overviewIcon}>
-          <MIcon name={icon} size={20} />
-        </div>
+        <span className={styles.overviewValue}>
+          {pct.toFixed(1)}
+          <span className={styles.overviewUnit}>%</span>
+        </span>
       </div>
       <UsageBar pct={pct} />
     </div>
@@ -111,7 +111,7 @@ function NodeTrends({ node, timeframe }) {
   }, [node, timeframe]);
 
   if (data === null) {
-    return <div className={styles.trendLoading}>載入趨勢中…</div>;
+    return <LoadingState text="載入趨勢中…" />;
   }
 
   return (
@@ -155,7 +155,7 @@ function AlertsCard() {
       await MonitoringService.ackAlert(alertId);
       await load();
     } catch (e) {
-      toast.error(e?.message ?? "確認告警失敗");
+      toast.error(e?.message ?? "確認警告失敗");
     } finally {
       setAckBusy(null);
     }
@@ -167,9 +167,9 @@ function AlertsCard() {
         <div>
           <h2 className={styles.cardTitle}>
             <MIcon name="notifications" size={18} />
-            活動告警
+            活動警告
           </h2>
-          <p className={styles.cardDesc}>超過閾值的資源使用告警（每 30 秒更新）</p>
+          <p className={styles.cardDesc}>超過閾值的資源使用警告（每 30 秒更新）</p>
         </div>
         {alerts && alerts.length > 0 && (
           <span className={styles.alertCount}>{alerts.length}</span>
@@ -177,12 +177,9 @@ function AlertsCard() {
       </div>
 
       {alerts === null ? (
-        <p className={styles.cardEmpty}>載入中…</p>
+        <LoadingState />
       ) : alerts.length === 0 ? (
-        <div className={styles.cardEmpty}>
-          <MIcon name="notifications_off" size={24} />
-          <p>目前沒有活動告警</p>
-        </div>
+        <EmptyState icon="notifications_off" title="目前沒有活動警告" />
       ) : (
         <div className={styles.alertList}>
           {alerts.map((alert) => (
@@ -234,7 +231,7 @@ function TopVmTable({ title, entries, metric }) {
         <h2 className={styles.cardTitle}>{title}</h2>
       </div>
       {entries.length === 0 ? (
-        <p className={styles.cardEmpty}>無運行中的資源</p>
+        <EmptyState icon="dns" title="無運行中的資源" />
       ) : (
         <table className={styles.table}>
           <thead>
@@ -300,7 +297,7 @@ export default function MonitoringPage() {
   }, [load]);
 
   if (loading) {
-    return <div className={styles.pageLoading}>載入監控資料中…</div>;
+    return <LoadingState fullPage text="載入監控資料中…" />;
   }
 
   if (error || !overview) {
@@ -321,11 +318,7 @@ export default function MonitoringPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>資源監控</h1>
-          <p className={styles.pageSubtitle}>叢集資源使用、節點趨勢與閾值告警</p>
-        </div>
+      <PageHeader title="資源監控" subtitle="叢集資源使用、節點趨勢與閾值警告">
         <div className={styles.pageActions}>
           <div className={styles.segment}>
             {TIMEFRAMES.map((t) => (
@@ -340,25 +333,22 @@ export default function MonitoringPage() {
             ))}
           </div>
         </div>
-      </div>
+      </PageHeader>
 
       {/* 叢集用量卡片 */}
       <div className={styles.statRow}>
         <OverviewCard
           title="CPU 用量"
-          icon="memory"
           pct={cpuPct}
           detail={`${overview.cpu_used.toFixed(1)} / ${overview.cpu_total} 核心`}
         />
         <OverviewCard
           title="記憶體用量"
-          icon="sd_card"
           pct={memPct}
           detail={`${formatBytes(overview.mem_used)} / ${formatBytes(overview.mem_total)}`}
         />
         <OverviewCard
           title="磁碟用量"
-          icon="storage"
           pct={diskPct}
           detail={`${formatBytes(overview.disk_used)} / ${formatBytes(overview.disk_total)}`}
         />
@@ -392,7 +382,7 @@ export default function MonitoringPage() {
         </div>
       </div>
 
-      {/* 活動告警 */}
+      {/* 活動警告 */}
       <AlertsCard />
 
       {/* 挖礦事件（模組 D，位置比照舊版監控頁） */}
@@ -414,6 +404,7 @@ export default function MonitoringPage() {
               <th className={`${styles.th} ${styles.thWide}`}>CPU</th>
               <th className={`${styles.th} ${styles.thWide}`}>記憶體</th>
               <th className={`${styles.th} ${styles.thWide}`}>磁碟</th>
+              <th className={`${styles.th} ${styles.thRight}`}>VM / LXC</th>
               <th className={styles.th}>運行時間</th>
             </tr>
           </thead>
@@ -435,6 +426,9 @@ export default function MonitoringPage() {
                         <MIcon name={expanded ? "expand_more" : "chevron_right"} size={16} />
                         <MIcon name="dns" size={16} />
                         <strong>{node.node}</strong>
+                        {node.connection_name && (
+                          <span className={styles.typeBadge}>{node.connection_name}</span>
+                        )}
                       </span>
                     </td>
                     <td className={styles.td}>
@@ -475,13 +469,16 @@ export default function MonitoringPage() {
                         <UsageBar pct={nodeDisk} />
                       </div>
                     </td>
+                    <td className={`${styles.td} ${styles.numericCell}`}>
+                      {node.vm_count}
+                    </td>
                     <td className={`${styles.td} ${styles.mutedCell}`}>
                       {formatUptime(node.uptime)}
                     </td>
                   </tr>
                   {expanded && (
                     <tr className={styles.trExpand}>
-                      <td colSpan={6} className={styles.tdExpand}>
+                      <td colSpan={7} className={styles.tdExpand}>
                         <NodeTrends node={node.node} timeframe={timeframe} />
                       </td>
                     </tr>

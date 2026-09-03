@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import styles from "./AiApiKeysPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import LoadingState from "../../../components/LoadingState/LoadingState";
+import SharedEmptyState from "../../../components/EmptyState/EmptyState";
 import { AiApiService } from "../../../services/aiApi";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
+import useDialogPresence from "../../../hooks/useDialogPresence";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 const PAGE_SIZE = 50;
 
@@ -28,18 +32,12 @@ function StatusBadge({ item }) {
 
 function EmptyState() {
   return (
-    <div className={styles.empty}>
-      <div className={styles.emptyIcon}>
-        <MIcon name="vpn_key" size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>尚無金鑰紀錄</h2>
-      <p className={styles.emptyDesc}>目前沒有符合條件的金鑰紀錄。</p>
-    </div>
+    <SharedEmptyState icon="vpn_key" title="尚無金鑰紀錄" />
   );
 }
 
 /* ── Delete dialog ── */
-function DeleteDialog({ item, onClose, onDone }) {
+function DeleteDialog({ item, closing = false, onClose, onDone }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
 
@@ -60,7 +58,10 @@ function DeleteDialog({ item, onClose, onDone }) {
   };
 
   return (
-    <div className={styles.dialogOverlay} onClick={() => { if (!busy) onClose(); }}>
+    <div
+      className={`${styles.dialogOverlay} ${closing ? styles.dialogOverlayOut : ""}`}
+      onClick={() => { if (!busy) onClose(); }}
+    >
       <div className={styles.dialog} onClick={(e) => e.stopPropagation()}>
         <div className={styles.dialogHeader}>
           <h3 className={styles.dialogTitle}>確認刪除這把金鑰？</h3>
@@ -90,6 +91,7 @@ export default function AiApiKeysPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [deletingItem, setDeletingItem] = useState(null);
+  const deleteDialog = useDialogPresence(deletingItem);
 
   /* ── counts ── */
   const [allCount, setAllCount] = useState(0);
@@ -141,14 +143,7 @@ export default function AiApiKeysPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>AI API 金鑰管理</h1>
-          <p className={styles.pageSubtitle}>
-            查看目前資料庫中所有 AI API 金鑰紀錄與狀態（僅顯示現存紀錄）。
-          </p>
-        </div>
-      </div>
+      <PageHeader title="金鑰管理" subtitle="查看目前資料庫中所有 AI API 金鑰紀錄與狀態（僅顯示現存紀錄）。" />
 
       {/* ── Stat cards ── */}
       <div className={styles.statRow}>
@@ -202,7 +197,7 @@ export default function AiApiKeysPage() {
       {/* ── Table ── */}
       <div className={styles.content}>
         {loading ? (
-          <div className={styles.loadingText}>載入中…</div>
+          <LoadingState fullPage />
         ) : rows.length === 0 ? (
           <EmptyState />
         ) : (
@@ -283,9 +278,10 @@ export default function AiApiKeysPage() {
       </div>
 
       {/* ── Delete dialog ── */}
-      {deletingItem && (
+      {deleteDialog.open && (
         <DeleteDialog
-          item={deletingItem}
+          item={deleteDialog.item}
+          closing={deleteDialog.closing}
           onClose={() => setDeletingItem(null)}
           onDone={load}
         />

@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./AdminPage.module.scss";
 import MIcon from "../../../components/MIcon";
+import LoadingState from "../../../components/LoadingState/LoadingState";
+import SharedEmptyState from "../../../components/EmptyState/EmptyState";
 import { useAuth } from "../../../contexts/AuthContext";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
+import useDialogPresence from "../../../hooks/useDialogPresence";
 import { UsersService } from "../../../services/users";
+import PageHeader from "../../../components/PageHeader/PageHeader";
 
 const ROLE_OPTIONS = [
   { value: "student", label: "學生" },
@@ -43,19 +47,14 @@ function formatDate(value) {
 
 function EmptyState({ hasQuery }) {
   return (
-    <div className={styles.empty}>
-      <div className={styles.emptyIcon}>
-        <MIcon name={hasQuery ? "search_off" : "manage_accounts"} size={40} />
-      </div>
-      <h2 className={styles.emptyTitle}>{hasQuery ? "找不到使用者" : "尚無使用者"}</h2>
-      <p className={styles.emptyDesc}>
-        {hasQuery ? "請調整搜尋關鍵字或清除篩選。" : "點擊新增使用者建立第一個帳戶。"}
-      </p>
-    </div>
+    <SharedEmptyState
+      icon={hasQuery ? "search_off" : "manage_accounts"}
+      title={hasQuery ? "找不到使用者" : "尚無使用者"}
+    />
   );
 }
 
-function UserModal({ mode, user, loading, onClose, onSubmit }) {
+function UserModal({ mode, user, loading, closing = false, onClose, onSubmit }) {
   const [form, setForm] = useState(() => initialForm(user));
   const isEdit = mode === "edit";
 
@@ -76,7 +75,10 @@ function UserModal({ mode, user, loading, onClose, onSubmit }) {
   }
 
   return (
-    <div className={styles.modalOverlay} onMouseDown={onClose}>
+    <div
+      className={`${styles.modalOverlay} ${closing ? styles.modalOverlayOut : ""}`}
+      onMouseDown={onClose}
+    >
       <form className={styles.modal} onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
         <div className={styles.modalHeader}>
           <div>
@@ -157,9 +159,12 @@ function UserModal({ mode, user, loading, onClose, onSubmit }) {
   );
 }
 
-function ConfirmDelete({ user, loading, onClose, onConfirm }) {
+function ConfirmDelete({ user, loading, closing = false, onClose, onConfirm }) {
   return (
-    <div className={styles.modalOverlay} onMouseDown={onClose}>
+    <div
+      className={`${styles.modalOverlay} ${closing ? styles.modalOverlayOut : ""}`}
+      onMouseDown={onClose}
+    >
       <div className={styles.confirm} onMouseDown={(e) => e.stopPropagation()}>
         <div className={styles.confirmIcon}>
           <MIcon name="warning" size={24} />
@@ -229,6 +234,8 @@ export default function AdminPage() {
   const [deleting, setDeleting] = useState(false);
   const [modal, setModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const modalPresence  = useDialogPresence(modal);
+  const deletePresence = useDialogPresence(deleteTarget);
 
   /** silent = true 時不觸發 loading 與錯誤提示，供背景自動刷新使用 */
   const fetchUsers = useCallback(async (silent = false) => {
@@ -306,16 +313,12 @@ export default function AdminPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div className={styles.pageHeading}>
-          <h1 className={styles.pageTitle}>使用者管理</h1>
-          <p className={styles.pageSubtitle}>管理使用者帳戶、角色與登入狀態</p>
-        </div>
+      <PageHeader title="使用者管理" subtitle="管理使用者帳戶、角色與登入狀態">
         <button type="button" className={styles.btnPrimary} onClick={() => setModal({ mode: "create" })}>
           <MIcon name="person_add" size={16} />
           新增使用者
         </button>
-      </div>
+      </PageHeader>
 
       <div className={styles.summaryGrid}>
         <div className={styles.summaryItem}>
@@ -349,7 +352,7 @@ export default function AdminPage() {
 
       <div className={styles.content}>
         {loading ? (
-          <div className={styles.loading}>載入使用者...</div>
+          <LoadingState fullPage text="載入使用者..." />
         ) : visibleUsers.length === 0 ? (
           <EmptyState hasQuery={Boolean(query.trim())} />
         ) : (
@@ -367,20 +370,22 @@ export default function AdminPage() {
         )}
       </div>
 
-      {modal && (
+      {modalPresence.open && (
         <UserModal
-          mode={modal.mode}
-          user={modal.user}
+          mode={modalPresence.item.mode}
+          user={modalPresence.item.user}
           loading={saving}
+          closing={modalPresence.closing}
           onClose={() => setModal(null)}
           onSubmit={handleSubmit}
         />
       )}
 
-      {deleteTarget && (
+      {deletePresence.open && (
         <ConfirmDelete
-          user={deleteTarget}
+          user={deletePresence.item}
           loading={deleting}
+          closing={deletePresence.closing}
           onClose={() => setDeleteTarget(null)}
           onConfirm={handleDelete}
         />

@@ -79,14 +79,6 @@ from .gpu import (
     GPUSummary,
     GPUUsageInfo,
 )
-from .group import (
-    GroupCreate,
-    GroupDetailPublic,
-    GroupMemberAdd,
-    GroupMemberPublic,
-    GroupPublic,
-    GroupsPublic,
-)
 from .ldap import (
     LdapConfigPublic,
     LdapConfigUpdate,
@@ -106,10 +98,6 @@ from .monitoring import (
     NodeMetrics,
     VMTopEntry,
 )
-from .pair_session import (
-    PairSessionCreate,
-    PairSessionPublic,
-)
 from .proxmox_config import (
     ProxmoxConfigPublic,
     ProxmoxConfigUpdate,
@@ -117,6 +105,8 @@ from .proxmox_config import (
 )
 from .quota import (
     EffectiveQuotaPublic,
+    GlobalQuotaPublic,
+    GlobalQuotaUpdate,
     QuotaUsagePublic,
     ResourceQuotaCreate,
     ResourceQuotaPublic,
@@ -149,26 +139,11 @@ from .resource import (
     VMTemplateSchema,
     VNCInfoSchema,
 )
-from .script_deploy import (
-    ScriptDeployRequest,
-    ScriptDeployResponse,
-    ScriptDeployStatus,
-)
 from .spec_change_request import (
     SpecChangeRequestCreate,
     SpecChangeRequestPublic,
     SpecChangeRequestReview,
     SpecChangeRequestsPublic,
-)
-from .teaching import (
-    BatchSpecAccepted,
-    BatchSpecItemPublic,
-    BatchSpecRequest,
-    BatchSpecStatusPublic,
-    ConfigPushAccepted,
-    ConfigPushItemPublic,
-    ConfigPushStatusPublic,
-    HeatmapEntry,
 )
 from .user import (
     UpdatePassword,
@@ -311,13 +286,6 @@ __all__ = [
     "SpecChangeRequestReview",
     "SpecChangeRequestPublic",
     "SpecChangeRequestsPublic",
-    # Groups
-    "GroupCreate",
-    "GroupPublic",
-    "GroupsPublic",
-    "GroupDetailPublic",
-    "GroupMemberAdd",
-    "GroupMemberPublic",
     # Firewall
     "PortSpec",
     "ConnectionCreate",
@@ -351,26 +319,12 @@ __all__ = [
     "ProxmoxConfigPublic",
     "ProxmoxConfigUpdate",
     "ProxmoxConnectionTestResult",
-    # Pair Mode (module E)
-    "PairSessionCreate",
-    "PairSessionPublic",
     # Quota (module E)
     "EffectiveQuotaPublic",
+    "GlobalQuotaPublic",
+    "GlobalQuotaUpdate",
     "QuotaUsagePublic",
     "ResourceQuotaCreate",
     "ResourceQuotaPublic",
     "ResourceQuotaUpdate",
-    # Script Deploy
-    "ScriptDeployRequest",
-    "ScriptDeployResponse",
-    "ScriptDeployStatus",
-    # Teaching (module E)
-    "ConfigPushAccepted",
-    "ConfigPushItemPublic",
-    "ConfigPushStatusPublic",
-    "HeatmapEntry",
-    "BatchSpecRequest",
-    "BatchSpecAccepted",
-    "BatchSpecItemPublic",
-    "BatchSpecStatusPublic",
 ]

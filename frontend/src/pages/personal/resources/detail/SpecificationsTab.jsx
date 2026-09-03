@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import styles from "./ResourceDetailPage.module.scss";
+import LoadingState from "../../../../components/LoadingState/LoadingState";
 import { useAuth } from "../../../../contexts/AuthContext";
 import { ResourcesService } from "../../../../services/resources";
 import { SpecChangeRequestsService } from "../../../../services/specChangeRequests";
 import { useToast } from "../../../../hooks/useToast";
+import { focusInvalidField } from "../../../../utils/focusField";
 
 export default function SpecificationsTab({ vmid }) {
   const toast = useToast();
@@ -14,6 +16,8 @@ export default function SpecificationsTab({ vmid }) {
   const [cores, setCores] = useState(1);
   const [memory, setMemory] = useState(512);
   const [reason, setReason] = useState("");
+  const [reasonInvalid, setReasonInvalid] = useState(false);
+  const reasonRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
 
@@ -54,7 +58,8 @@ export default function SpecificationsTab({ vmid }) {
     }
 
     if (reason.trim().length < 10) {
-      toast.error("請填寫至少 10 個字的申請原因");
+      setReasonInvalid(true);
+      focusInvalidField(reasonRef.current);
       return;
     }
     if (!hasChanges) {
@@ -81,7 +86,7 @@ export default function SpecificationsTab({ vmid }) {
   };
 
   if (error) return <p className={styles.stateText}>無法載入資源配置</p>;
-  if (!config) return <p className={styles.stateText}>載入中…</p>;
+  if (!config) return <LoadingState />;
 
   return (
     <div className={styles.tabStack}>
@@ -126,14 +131,16 @@ export default function SpecificationsTab({ vmid }) {
           </div>
 
           {!isAdmin && (
-            <div className={styles.field}>
+            <div className={`${styles.field} ${reasonInvalid ? styles.fieldInvalid : ""}`}>
               <label htmlFor="spec-reason">申請原因 *</label>
               <textarea
                 id="spec-reason"
+                ref={reasonRef}
                 rows={4}
                 placeholder="請說明為什麼需要調整規格（課程需求、負載狀況等）"
+                aria-invalid={reasonInvalid}
                 value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                onChange={(e) => { setReason(e.target.value); setReasonInvalid(false); }}
               />
               <span className={styles.fieldHint}>至少 10 個字</span>
             </div>

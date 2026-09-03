@@ -18,7 +18,7 @@ SkyLab 是一個面向校園資源管理的全端 Proxmox VE（PVE）虛擬化�
 | Gateway 安裝腳本 | `gateway/` | 校內出口閘道安裝腳本 |
 | Docs | `docs/` | 補充文件 |
 
-完整架構/部署指引請見 `development.md`、`deployment.md`、`placement.md`。
+完整架構/部署指引請見 `docs/development.md`、`docs/deployment.md`。
 
 ## 技術棧概覽
 
@@ -37,7 +37,9 @@ SkyLab 是一個面向校園資源管理的全端 Proxmox VE（PVE）虛擬化�
 - 防火牆拓撲視覺化、NAT 規則、Reverse Proxy 規則管理
 - 閘道 VM 管理：HAProxy / Traefik / FRP（client/server）設定
 - 多重 Proxmox cluster 連線設定與 HA failover
-- 群組（班級）管理、CSV 大量匯入、自動寄發初始密碼信
+- 正式班級管理、固定課表、學生名單、多機環境與整班批次建置
+- 班級教室監看、教師廣播，以及班級內的 AI 評分檢查
+- 管理員專用的獨立 AI PVE 維運助手（不綁定班級）
 - AI API 憑證管理 + 申請審核 + Redis sliding-window 流量限制
 - OpenAI 相容 AI Proxy：使用者透過 Campus `/api/v1/ai-proxy/{models,chat/completions,completions,responses}` 呼叫；Backend 驗證 `ccai_*` 後轉發至受限 LiteLLM service key。內部 System AI 仍直接走 `{VLLM_BASE_URL}/chat/completions`
 - 規格變更申請（vCPU / RAM / Disk）審核流程
@@ -182,8 +184,9 @@ python resource_ssh_ls.py --vmid 101 --ssh-user ubuntu --path /etc
 
 ## 文件索引
 
-- [`development.md`](development.md) — 完整開發環境設置
-- [`deployment.md`](deployment.md) — 生產部署指引
+- [`docs/multi-machine-environment-sop.md`](docs/multi-machine-environment-sop.md) — 多機教學環境建構、發布與學生使用的正式 SOP
+- [`docs/development.md`](docs/development.md) — 完整開發環境設置
+- [`docs/deployment.md`](docs/deployment.md) — 生產部署指引
 - [`placement.md`](placement.md) — VM placement 演算法說明
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — 貢獻指引
 - [`SECURITY.md`](SECURITY.md) — 安全政策

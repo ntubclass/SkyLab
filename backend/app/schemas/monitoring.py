@@ -20,6 +20,8 @@ class NodeMetrics(BaseModel):
     disk: int
     maxdisk: int
     uptime: int
+    vm_count: int = 0
+    connection_name: str | None = None  # 所屬 PVE 連線；None = 尚未歸屬（舊資料）
 
 
 class VMTopEntry(BaseModel):
@@ -56,7 +58,7 @@ class MonitoringOverview(BaseModel):
 
 
 class AlertEventPublic(BaseModel):
-    """告警事件（open = resolved_at 為 None）。"""
+    """警告事件（open = resolved_at 為 None）。"""
 
     id: uuid.UUID
     scope: AlertScope

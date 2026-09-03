@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost, apiPut } from "./api";
+import { apiDelete, apiGet, apiGetBlob, apiPost, apiPut } from "./api";
 
 /**
  * 課程實驗室（Course Lab）：
@@ -7,6 +7,16 @@ import { apiDelete, apiGet, apiPost, apiPut } from "./api";
  * 欄位見後端 app/schemas/course.py。
  */
 export const CoursesService = {
+  /** 今天實際有排課、且學生已加入的課程。 */
+  listSchedule() {
+    return apiGet("/api/v1/courses/schedule");
+  },
+
+  /** 由資源期限、申請審核與近期課堂任務產生的提醒。 */
+  listReminders() {
+    return apiGet("/api/v1/courses/reminders");
+  },
+
   /** 已發布路徑清單（含我的進度 %） */
   listPaths() {
     return apiGet("/api/v1/courses/paths");
@@ -15,6 +25,48 @@ export const CoursesService = {
   /** 路徑詳情：房間清單 + 進度 */
   getPath(pathId) {
     return apiGet(`/api/v1/courses/paths/${pathId}`);
+  },
+
+  /** 取得老師已核准、可讓學生查看的 AI 評分任務。 */
+  getAiAssignments(pathId) {
+    return apiGet(`/api/v1/courses/paths/${pathId}/ai-assignments`);
+  },
+
+  /** 取得老師在班級每週內容中正式發布的任務與 PDF。 */
+  getWeeklyTasks(pathId) {
+    return apiGet(`/api/v1/courses/paths/${pathId}/weekly-tasks`);
+  },
+
+  /** 透過有課程身分驗證的端點預覽每週任務 PDF。 */
+  getWeeklyTaskDocument(pathId, weekId, fileId) {
+    return apiGetBlob(
+      `/api/v1/courses/paths/${pathId}/weekly-tasks/${weekId}/files/${fileId}`,
+    );
+  },
+
+  /** 取得老師上傳、且與已核准任務相連的 PDF。 */
+  getAiAssignmentDocument(pathId, assignmentId) {
+    return apiGetBlob(
+      `/api/v1/courses/paths/${pathId}/ai-assignments/${assignmentId}/source-document`,
+    );
+  },
+
+  /** 取得學生在此課程由班級流程分配的所有練習機器。 */
+  getPracticeMachines(pathId) {
+    return apiGet(`/api/v1/courses/paths/${pathId}/practice-machines`);
+  },
+
+  /** 學生完成操作後，對自己的班級機器送出 AI Check。 */
+  startAiCheck(pathId, assignmentId, itemId = null) {
+    return apiPost(
+      `/api/v1/courses/paths/${pathId}/ai-assignments/${assignmentId}/checks`,
+      itemId ? { item_id: itemId } : {},
+    );
+  },
+
+  /** 查詢自己送出的 AI Check 進度與回饋。 */
+  getAiCheck(pathId, assignmentId, runId) {
+    return apiGet(`/api/v1/courses/paths/${pathId}/ai-assignments/${assignmentId}/checks/${runId}`);
   },
 
   /** 房間詳情：任務 + 題目（不含答案）+ 我的部署狀態 */

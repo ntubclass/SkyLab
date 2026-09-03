@@ -48,6 +48,7 @@ ResourceStatus = Literal[
     "running",
     "stopped",
     "paused",
+    "deleting",
     "failed",
     "deleted",
     "unknown",
@@ -91,16 +92,6 @@ class VMSchema(BaseModel):
     maxdisk: int | None = None
 
 
-class VNCInfoSchema(BaseModel):
-    """VNC 連線資訊"""
-
-    vmid: int
-    ws_url: str
-    ticket: str | None = None
-    port: str | None = None
-    message: str
-
-
 class TerminalInfoSchema(BaseModel):
     """LXC Terminal 連線資訊"""
 
@@ -110,12 +101,22 @@ class TerminalInfoSchema(BaseModel):
     message: str
 
 
+class VNCInfoSchema(BaseModel):
+    """VNC 連線資訊"""
+
+    vmid: int
+    ws_url: str
+    ticket: str | None = None
+    port: str | None = None
+    message: str
 class TemplateSchema(BaseModel):
     """LXC OS template 資訊"""
 
     volid: str
     format: str
     size: int
+    # 看得到此模板的節點（跨連線彙總）；申請只能落在這些節點上
+    nodes: list[str] = []
 
 
 class VMTemplateSchema(BaseModel):
@@ -124,6 +125,13 @@ class VMTemplateSchema(BaseModel):
     vmid: int
     name: str
     node: str
+    ostype: str | None = None
+    # Windows 範本帳號由 cloudbase-init 設定檔固定，前端不顯示帳號欄位
+    is_windows: bool = False
+    # 範本自身的規格：前端以此帶入預設值；磁碟為克隆下限（不可縮小）
+    cores: int | None = None
+    memory_mb: int | None = None
+    disk_gb: int | None = None
 
 
 class NextVMIDSchema(BaseModel):
@@ -150,7 +158,6 @@ class LXCCreateRequest(BaseModel):
     expiry_date: date | None = None
     start: bool = True
     unprivileged: bool = True
-    service_template_slug: str | None = None
 
 
 class VMCreateRequest(BaseModel):
@@ -168,7 +175,6 @@ class VMCreateRequest(BaseModel):
     os_info: str | None = None
     expiry_date: date | None = None
     start: bool = True
-    service_template_slug: str | None = None
 
 
 # ===== Resource Response Schemas =====
@@ -197,18 +203,24 @@ class ResourcePublic(BaseModel):
 
     vmid: int | None
     request_id: uuid.UUID | None = None
+    teaching_class_id: uuid.UUID | None = None
+    allocation_scope: Literal["personal", "teaching_class"] = "personal"
+    control_policy: Literal["owner", "class_member"] = "owner"
     name: str
     status: ResourceStatus
     node: str
     type: str
     is_placeholder: bool = False
     can_control: bool = True
+    can_delete: bool = True
+    can_request_spec_change: bool = True
+    can_extend: bool = True
     environment_type: str | None = None
     os_info: str | None = None
     expiry_date: date | None = None
     ip_address: str | None = None
     ssh_public_key: str | None = None
-    service_template_slug: str | None = None
+    has_login_password: bool = False
     cpu: float | None = None
     maxcpu: int | None = None
     mem: int | None = None
@@ -247,11 +259,12 @@ class ExtendSessionResponse(BaseModel):
 
 
 class SSHKeyResponse(BaseModel):
-    """SSH 金鑰回應"""
+    """SSH 金鑰與登入密碼回應"""
 
     vmid: int
     ssh_public_key: str | None = None
     ssh_private_key: str | None = None
+    login_password: str | None = None
 
 
 # ===== Monitoring Schemas =====

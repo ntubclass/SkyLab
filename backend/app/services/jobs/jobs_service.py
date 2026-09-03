@@ -8,8 +8,8 @@
 
 from __future__ import annotations
 
+import json
 import logging
-import re
 import uuid
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
@@ -20,13 +20,15 @@ from sqlmodel import Session, select
 from app.models import (
     DeletionRequest,
     DeletionRequestStatus,
-    ScriptDeployLog,
     SpecChangeRequest,
     SpecChangeRequestStatus,
+    TaskRecord,
+    TaskRecordStatus,
     User,
     VMProvisioningStatus,
     VMRequest,
     VMRequestStatus,
+    VMTemplate,
 )
 from app.schemas.jobs import (
     ACTIVE_JOB_STATUSES,
@@ -35,6 +37,11 @@ from app.schemas.jobs import (
     JobKind,
     JobsListResponse,
     JobStatus,
+)
+from app.services.resource.resource_service import (
+    RESOURCE_CONVERTED_TO_TEMPLATE_MARKER,
+    RESOURCE_DELETED_BY_USER_MARKER,
+    RESOURCE_DELETED_ORPHAN_MARKER,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,6 +60,7 @@ _VM_REQUEST_STATUS_MAP: dict[VMRequestStatus, JobStatus] = {
     VMRequestStatus.approved: JobStatus.pending,        # 已核准、等待派發
     VMRequestStatus.rejected: JobStatus.failed,
     VMRequestStatus.cancelled: JobStatus.cancelled,
+    VMRequestStatus.expired: JobStatus.cancelled,       # 時段過完沒人審，失效
 }
 
 _SPEC_CHANGE_STATUS_MAP: dict[SpecChangeRequestStatus, JobStatus] = {
@@ -61,12 +69,21 @@ _SPEC_CHANGE_STATUS_MAP: dict[SpecChangeRequestStatus, JobStatus] = {
     SpecChangeRequestStatus.rejected: JobStatus.failed,
 }
 
-_SCRIPT_DEPLOY_STATUS_MAP: dict[str, JobStatus] = {
-    "pending": JobStatus.pending,
-    "running": JobStatus.running,
-    "completed": JobStatus.completed,
-    "failed": JobStatus.failed,
-    "cancelled": JobStatus.cancelled,
+_TEMPLATE_TASK_STATUS_MAP: dict[TaskRecordStatus, JobStatus] = {
+    TaskRecordStatus.queued: JobStatus.pending,
+    TaskRecordStatus.running: JobStatus.running,
+    TaskRecordStatus.succeeded: JobStatus.completed,
+    TaskRecordStatus.failed: JobStatus.failed,
+}
+
+# 與前端 TEMPLATE_TASK_LABEL 對齊
+_TEMPLATE_TASK_TYPE_LABEL: dict[str, str] = {
+    "template.convert": "轉換範本",
+    "template.delete": "刪除範本",
+    "template.update_clone": "更新循環：建立暫存母機",
+    "template.update_convert": "更新循環：轉換新版",
+    "template.update_cancel": "更新循環：取消",
+    "template.clone": "克隆開通",
 }
 
 _DELETION_STATUS_MAP: dict[DeletionRequestStatus, JobStatus] = {
@@ -90,68 +107,35 @@ def _coerce_aware(dt: datetime | None) -> datetime | None:
     return dt
 
 
-_PROGRESS_RE = re.compile(r"(\d{1,3})\s*%")
-
-
-def _parse_progress(text: str | None) -> int | None:
-    if not text:
-        return None
-    m = _PROGRESS_RE.search(text)
-    if not m:
-        return None
-    try:
-        v = int(m.group(1))
-        return max(0, min(100, v))
-    except ValueError:
-        return None
-
-
 # ─── 各來源 → JobItem ──────────────────────────────────────────────────────────
 
 
-def _script_deploy_to_job(log: ScriptDeployLog, *,
-                          user_email: str | None = None) -> JobItem:
-    name = log.template_name or log.template_slug
-    target = log.hostname or (str(log.vmid) if log.vmid else "")
-    title = f"部署 {name}" + (f" → {target}" if target else "")
+# 申請單被「消耗」（資源刪除 / 轉範本）時 mark_linked_request_consumed 會把
+# marker 寫進 provisioning_error / review_comment 並標 failed（讓排程器停手）。
+# 對使用者而言這不是失敗——機器曾成功開通，只是後續生命週期把申請單結束掉，
+# 因此顯示層轉譯成「已結案」而非紅色錯誤。
+_CONSUMED_REQUEST_MESSAGES = {
+    RESOURCE_CONVERTED_TO_TEMPLATE_MARKER: "母機已轉為範本，申請單已結案",
+    RESOURCE_DELETED_BY_USER_MARKER: "資源已由使用者刪除，申請單已結案",
+    RESOURCE_DELETED_ORPHAN_MARKER: "資源紀錄已清理（PVE 端已不存在），申請單已結案",
+}
 
-    status = _SCRIPT_DEPLOY_STATUS_MAP.get(log.status.lower(), JobStatus.pending)
-    progress = _parse_progress(log.progress)
-    if progress is None:
-        if status == JobStatus.completed:
-            progress = 100
-        elif status == JobStatus.running:
-            progress = 50
 
-    return JobItem(
-        id=f"script_deploy:{log.task_id}",
-        kind=JobKind.script_deploy,
-        title=title,
-        status=status,
-        progress=progress,
-        message=log.message or log.error,
-        user_id=log.user_id,
-        user_email=user_email,
-        created_at=_coerce_aware(log.created_at) or _now(),
-        updated_at=_coerce_aware(log.updated_at) or _now(),
-        completed_at=_coerce_aware(log.completed_at),
-        detail_url=f"/jobs?focus=script_deploy:{log.task_id}",
-        meta={
-            "task_id": log.task_id,
-            "vmid": log.vmid,
-            "template_slug": log.template_slug,
-            "template_name": log.template_name,
-            "hostname": log.hostname,
-        },
-    )
+def _consumed_request_message(req: VMRequest) -> str | None:
+    return _CONSUMED_REQUEST_MESSAGES.get(
+        req.provisioning_error or ""
+    ) or _CONSUMED_REQUEST_MESSAGES.get(req.review_comment or "")
 
 
 def _vm_request_to_job(req: VMRequest) -> JobItem:
     user_email = req.user.email if req.user else None
     title = f"開機申請：{req.hostname}（{req.cores} cores / {req.memory} MB）"
     status = _VM_REQUEST_STATUS_MAP.get(req.status, JobStatus.pending)
+    consumed_message = _consumed_request_message(req)
     if req.status == VMRequestStatus.approved:
-        if req.provisioning_status == VMProvisioningStatus.failed or req.provisioning_error:
+        if consumed_message:
+            status = JobStatus.completed
+        elif req.provisioning_status == VMProvisioningStatus.failed or req.provisioning_error:
             status = JobStatus.failed
         elif req.vmid is not None:
             status = JobStatus.completed
@@ -169,7 +153,8 @@ def _vm_request_to_job(req: VMRequest) -> JobItem:
     overdue = False
     overdue_minutes: int | None = None
     if (
-        req.status in (VMRequestStatus.pending, VMRequestStatus.approved)
+        consumed_message is None
+        and req.status in (VMRequestStatus.pending, VMRequestStatus.approved)
         and req.start_at is not None
     ):
         start_at_aware = _coerce_aware(req.start_at)
@@ -179,7 +164,9 @@ def _vm_request_to_job(req: VMRequest) -> JobItem:
                 overdue = True
                 overdue_minutes = int(delta // 60)
 
-    base_message = req.review_comment or req.provisioning_error
+    base_message = (
+        consumed_message or req.review_comment or req.provisioning_error
+    )
     if overdue:
         overdue_label = (
             f"{overdue_minutes // 60} 小時"
@@ -212,6 +199,7 @@ def _vm_request_to_job(req: VMRequest) -> JobItem:
             "start_at": _isoformat(req.start_at),
             "overdue": overdue,
             "overdue_minutes": overdue_minutes,
+            "consumed": consumed_message is not None,
         },
     )
 
@@ -244,26 +232,6 @@ def _spec_change_to_job(req: SpecChangeRequest) -> JobItem:
 
 
 # ─── 來源查詢（已根據 user 過濾） ────────────────────────────────────────────
-
-
-def _fetch_script_deploy(
-    session: Session, *, user: User, since: datetime
-) -> list[JobItem]:
-    is_admin = bool(user.is_superuser or getattr(user, "role", None) == "admin")
-    stmt = select(ScriptDeployLog).where(ScriptDeployLog.updated_at >= since)
-    if not is_admin:
-        stmt = stmt.where(ScriptDeployLog.user_id == user.id)
-    stmt = stmt.order_by(ScriptDeployLog.updated_at.desc()).limit(_PER_SOURCE_FETCH_LIMIT)
-    rows = list(session.exec(stmt).all())
-
-    # 取使用者 email
-    user_ids = {r.user_id for r in rows if r.user_id is not None}
-    email_map: dict[uuid.UUID, str] = {}
-    if user_ids:
-        users = session.exec(select(User).where(User.id.in_(user_ids))).all()
-        email_map = {u.id: u.email for u in users}
-
-    return [_script_deploy_to_job(r, user_email=email_map.get(r.user_id) if r.user_id else None) for r in rows]
 
 
 def _fetch_vm_requests(
@@ -363,11 +331,106 @@ def _fetch_deletions(
     ]
 
 
+def _parse_json(text: str | None) -> dict:
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {}
+    except ValueError:
+        return {}
+
+
+def _template_task_to_job(
+    record: TaskRecord,
+    *,
+    user_email: str | None = None,
+    template_name: str | None = None,
+) -> JobItem:
+    payload = _parse_json(record.payload)
+    label = _TEMPLATE_TASK_TYPE_LABEL.get(record.task_type, record.task_type)
+    # 目標：克隆任務顯示新主機名，其餘顯示範本名（範本已刪除時退回 VMID）
+    target = (
+        payload.get("hostname")
+        if record.task_type == "template.clone"
+        else template_name
+    ) or (f"VMID {payload['pve_vmid']}" if payload.get("pve_vmid") else None)
+    title = f"{label}：{target}" if target else label
+
+    status = _TEMPLATE_TASK_STATUS_MAP.get(record.status, JobStatus.pending)
+    progress = 100 if status == JobStatus.completed else record.progress
+
+    updated = (
+        _coerce_aware(record.finished_at)
+        or _coerce_aware(record.started_at)
+        or _coerce_aware(record.created_at)
+        or _now()
+    )
+    return JobItem(
+        id=f"template:{record.id}",
+        kind=JobKind.template,
+        title=title,
+        status=status,
+        progress=progress,
+        message=record.error,
+        user_id=record.user_id,
+        user_email=user_email,
+        created_at=_coerce_aware(record.created_at) or _now(),
+        updated_at=updated,
+        completed_at=_coerce_aware(record.finished_at),
+        detail_url=f"/jobs?focus=template:{record.id}",
+        meta={
+            "task_type": record.task_type,
+            "template_id": str(record.template_id) if record.template_id else None,
+            "template_name": template_name,
+            "resource_vmid": record.resource_vmid,
+            "hostname": payload.get("hostname"),
+        },
+    )
+
+
+def _template_name_map(
+    session: Session, records: Iterable[TaskRecord]
+) -> dict[uuid.UUID, str]:
+    ids = {r.template_id for r in records if r.template_id is not None}
+    if not ids:
+        return {}
+    rows = session.exec(select(VMTemplate).where(VMTemplate.id.in_(ids))).all()
+    return {t.id: t.name for t in rows}
+
+
+def _fetch_template_tasks(
+    session: Session, *, user: User, since: datetime
+) -> list[JobItem]:
+    is_admin = bool(user.is_superuser or getattr(user, "role", None) == "admin")
+    stmt = select(TaskRecord).where(TaskRecord.created_at >= since)
+    if not is_admin:
+        stmt = stmt.where(TaskRecord.user_id == user.id)
+    stmt = stmt.order_by(TaskRecord.created_at.desc()).limit(_PER_SOURCE_FETCH_LIMIT)
+    rows = list(session.exec(stmt).all())
+
+    user_ids = {r.user_id for r in rows}
+    email_map: dict[uuid.UUID, str] = {}
+    if user_ids:
+        users = session.exec(select(User).where(User.id.in_(user_ids))).all()
+        email_map = {u.id: u.email for u in users}
+    name_map = _template_name_map(session, rows)
+
+    return [
+        _template_task_to_job(
+            r,
+            user_email=email_map.get(r.user_id),
+            template_name=name_map.get(r.template_id) if r.template_id else None,
+        )
+        for r in rows
+    ]
+
+
 _FETCHERS = {
-    JobKind.script_deploy: _fetch_script_deploy,
     JobKind.vm_request: _fetch_vm_requests,
     JobKind.spec_change: _fetch_spec_changes,
     JobKind.deletion: _fetch_deletions,
+    JobKind.template: _fetch_template_tasks,
 }
 
 
@@ -470,32 +533,6 @@ def _ensure_owner_or_admin(user: User, owner_id: uuid.UUID | None) -> None:
         raise JobAccessDeniedError("Not allowed to view this job")
 
 
-def _detail_script_deploy(session: Session, raw_id: str, user: User) -> JobDetail:
-    log = session.exec(
-        select(ScriptDeployLog).where(ScriptDeployLog.task_id == raw_id)
-    ).first()
-    if log is None:
-        raise JobNotFoundError("script deploy log not found")
-    _ensure_owner_or_admin(user, log.user_id)
-    owner_email: str | None = None
-    if log.user_id is not None:
-        owner = session.get(User, log.user_id)
-        if owner is not None:
-            owner_email = owner.email
-    item = _script_deploy_to_job(log, user_email=owner_email)
-    extra = {
-        "task_id": log.task_id,
-        "vmid": log.vmid,
-        "template_slug": log.template_slug,
-        "template_name": log.template_name,
-        "script_path": log.script_path,
-        "hostname": log.hostname,
-        "raw_status": log.status,
-        "progress_text": log.progress,
-    }
-    return JobDetail(item=item, output=log.output, error=log.error, extra=extra)
-
-
 def _detail_vm_request(session: Session, raw_id: str, user: User) -> JobDetail:
     try:
         req_uuid = uuid.UUID(raw_id)
@@ -520,7 +557,6 @@ def _detail_vm_request(session: Session, raw_id: str, user: User) -> JobDetail:
         "rootfs_size": req.rootfs_size,
         "ostemplate": req.ostemplate,
         "template_id": req.template_id,
-        "service_template_slug": req.service_template_slug,
         "assigned_node": req.assigned_node,
         "actual_node": req.actual_node,
         "desired_node": req.desired_node,
@@ -531,7 +567,15 @@ def _detail_vm_request(session: Session, raw_id: str, user: User) -> JobDetail:
         "reason": req.reason,
         "review_comment": req.review_comment,
     }
-    return JobDetail(item=item, error=req.provisioning_error, extra=extra)
+    return JobDetail(
+        item=item,
+        error=(
+            None
+            if _consumed_request_message(req)
+            else req.provisioning_error
+        ),
+        extra=extra,
+    )
 
 
 def _detail_spec_change(session: Session, raw_id: str, user: User) -> JobDetail:
@@ -593,11 +637,47 @@ def _detail_deletion(session: Session, raw_id: str, user: User) -> JobDetail:
     return JobDetail(item=item, error=req.error_message, extra=extra)
 
 
+def _detail_template_task(session: Session, raw_id: str, user: User) -> JobDetail:
+    try:
+        task_uuid = uuid.UUID(raw_id)
+    except ValueError as e:
+        raise JobNotFoundError(f"invalid template task id {raw_id}") from e
+    record = session.get(TaskRecord, task_uuid)
+    if record is None:
+        raise JobNotFoundError("template task not found")
+    _ensure_owner_or_admin(user, record.user_id)
+
+    owner = session.get(User, record.user_id)
+    template_name: str | None = None
+    if record.template_id is not None:
+        template = session.get(VMTemplate, record.template_id)
+        if template is not None:
+            template_name = template.name
+
+    item = _template_task_to_job(
+        record,
+        user_email=owner.email if owner else None,
+        template_name=template_name,
+    )
+    extra = {
+        "task_type": record.task_type,
+        "template_id": str(record.template_id) if record.template_id else None,
+        "template_name": template_name,
+        "raw_status": record.status.value,
+        "resource_vmid": record.resource_vmid,
+        "payload": _parse_json(record.payload),
+        "result": _parse_json(record.result),
+        "started_at": _isoformat(record.started_at),
+        "finished_at": _isoformat(record.finished_at),
+    }
+    return JobDetail(item=item, error=record.error, extra=extra)
+
+
 _DETAIL_FETCHERS = {
-    JobKind.script_deploy: _detail_script_deploy,
     JobKind.vm_request: _detail_vm_request,
     JobKind.spec_change: _detail_spec_change,
     JobKind.deletion: _detail_deletion,
+    JobKind.template: _detail_template_task,
 }
 
 
