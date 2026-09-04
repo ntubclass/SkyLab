@@ -254,7 +254,7 @@ onUnmounted(() => {
         >
           <span class="connect-button__icon">
             <IconifyIconOffline
-              :icon="loading ? 'refresh-rounded' : 'settings-ethernet-rounded'"
+              :icon="loading ? 'refresh-rounded' : 'play-arrow-rounded'"
             />
           </span>
           <span class="connect-button__copy">
@@ -262,9 +262,6 @@ onUnmounted(() => {
               loading ? t("home.connect.connecting") : t("home.connect.button")
             }}</strong>
             <small>{{ t("home.connect.secureHint") }}</small>
-          </span>
-          <span class="connect-button__arrow">
-            <IconifyIconOffline icon="arrow-forward-rounded" />
           </span>
         </button>
         <h1>{{ t("home.connect.title") }}</h1>
@@ -481,57 +478,39 @@ onUnmounted(() => {
 .connect-button {
   position: relative;
   display: flex;
-  width: min(430px, 100%);
-  min-height: 112px;
+  width: min(440px, 100%);
+  min-height: 104px;
   align-items: center;
   gap: 16px;
-  padding: 18px 20px;
+  padding: 20px 22px 20px 26px;
   overflow: hidden;
-  color: white;
-  background: linear-gradient(
-    125deg,
-    #6d86d0 0%,
-    var(--color-primary) 42%,
-    var(--color-primary-dark) 100%
-  );
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 24px;
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-surface) 92%, var(--color-hover));
+  border: 1px solid color-mix(in srgb, var(--color-primary) 20%, transparent);
+  border-radius: 18px;
   box-shadow:
-    0 20px 44px color-mix(in srgb, var(--color-primary) 30%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    0 12px 30px color-mix(in srgb, var(--color-primary) 13%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
   cursor: pointer;
   transition:
     transform 0.22s ease,
+    border-color 0.22s ease,
+    background 0.22s ease,
     box-shadow 0.22s ease,
     filter 0.22s ease;
 }
 
-.connect-button::before,
-.connect-button::after {
+.connect-button::before {
   position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
   content: "";
   pointer-events: none;
-  border-radius: 999px;
+  background: linear-gradient(180deg, #dc36a2, #7554ce 42%, #50b9e9 74%, #ffc34b);
+  border-radius: 18px 0 0 18px;
 }
 
-.connect-button::before {
-  top: -74px;
-  right: -38px;
-  width: 190px;
-  height: 190px;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.connect-button::after {
-  bottom: -80px;
-  left: 80px;
-  width: 150px;
-  height: 150px;
-  border: 24px solid rgba(255, 255, 255, 0.05);
-}
-
-.connect-button__icon,
-.connect-button__arrow {
+.connect-button__icon {
   position: relative;
   z-index: 1;
   display: flex;
@@ -541,13 +520,13 @@ onUnmounted(() => {
 }
 
 .connect-button__icon {
-  width: 64px;
-  height: 64px;
-  font-size: 35px;
-  background: rgba(255, 255, 255, 0.17);
-  border: 1px solid rgba(255, 255, 255, 0.24);
-  border-radius: 19px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  width: 56px;
+  height: 56px;
+  color: white;
+  font-size: 31px;
+  background: linear-gradient(145deg, #df3aa6, #7655ce 56%, #4db9e9);
+  border-radius: 15px;
+  box-shadow: 0 8px 18px rgba(103, 82, 199, 0.24);
 }
 
 .connect-button__copy {
@@ -562,6 +541,7 @@ onUnmounted(() => {
 }
 
 .connect-button__copy strong {
+  color: var(--color-text-primary);
   font-size: 19px;
   font-weight: 750;
   letter-spacing: 0.01em;
@@ -569,30 +549,19 @@ onUnmounted(() => {
 
 .connect-button__copy small {
   margin-top: 6px;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 500;
 }
 
-.connect-button__arrow {
-  width: 36px;
-  height: 36px;
-  font-size: 21px;
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 50%;
-  transition: transform 0.22s ease;
-}
-
 .connect-button:hover:not(:disabled) {
+  background: var(--color-surface);
+  border-color: color-mix(in srgb, var(--color-primary) 38%, transparent);
   box-shadow:
-    0 24px 52px color-mix(in srgb, var(--color-primary) 40%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.4);
-  filter: saturate(1.08);
-  transform: translateY(-3px);
-}
-
-.connect-button:hover:not(:disabled) .connect-button__arrow {
-  transform: translateX(3px);
+    0 16px 36px color-mix(in srgb, var(--color-primary) 19%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  filter: saturate(1.04);
+  transform: translateY(-2px);
 }
 
 .connect-button--loading {
