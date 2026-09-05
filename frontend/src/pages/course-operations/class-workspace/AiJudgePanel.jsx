@@ -1677,12 +1677,14 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
             rubricSnapshot: analysis,
             sourceFileId,
           });
-      toast.success(
-        artifact.status === "reviewed"
-          ? "檢查腳本已產生並通過審查"
-          : "檢查腳本已產生，請查看審查結果",
-      );
-      onScriptCreated?.();
+      if (artifact.status === "approved") {
+        toast.success("檢查腳本已通過靜態與 AI 檢查，可開始執行");
+      } else if (artifact.status === "review_failed") {
+        toast.error("自動修正仍未通過，已將原因放到腳本總覽");
+      } else {
+        toast.success("檢查腳本已產生，請查看審查結果");
+      }
+      onScriptCreated?.(artifact);
     } catch (err) {
       toast.error(err?.message ?? "製作檢查腳本失敗");
     } finally {
@@ -1869,9 +1871,20 @@ const SCRIPT_STATUS_LABELS = {
   draft: "草稿",
   review_failed: "審查未通過",
   reviewed: "待老師核准",
-  approved: "已核准",
+  approved: "已通過自動檢查",
   archived: "已停用",
 };
+
+const RETRY_STOP_REASON_LABELS = {
+  passed: "檢查通過",
+  same_failure_limit: "相同錯誤已重試 2 次",
+  total_retry_limit: "總重試次數已達 4 次",
+  unrecoverable_error: "無法自動修正的錯誤",
+};
+
+export function getScriptCreationDestination(artifact) {
+  return artifact?.status === "approved" ? "execution" : "scripts";
+}
 
 function scriptStatusBadgeClass(status) {
   if (status === "approved") return styles.badge_success;
@@ -1908,7 +1921,49 @@ function ReviewPanel({ title, result }) {
   );
 }
 
-function ScriptsTab({ classId, sessionId, readOnly = false, onScriptApproved }) {
+function RetrySummary({ script }) {
+  const summary = script?.policy_check_result_json?.retry_summary;
+  const attempts = Array.isArray(script?.policy_check_result_json?.review_attempts)
+    ? script.policy_check_result_json.review_attempts
+    : [];
+  if (script?.status !== "review_failed") return null;
+
+  const retryCount = Number(summary?.retry_count ?? 0);
+  const stopReason = RETRY_STOP_REASON_LABELS[summary?.stop_reason] ?? "審查未通過";
+  return (
+    <div className={styles.noticeInfo}>
+      <p>
+        <strong className={styles.dangerText}>{stopReason}</strong>
+      </p>
+      <p>Agent 已自動修正 {retryCount} 次；仍未通過時，請檢查下列原因後重新生成。</p>
+      {attempts.length > 0 && (
+        <ul className={styles.reviewIssues}>
+          {attempts.slice(-3).map((attempt, index) => {
+            const issues = [
+              ...(Array.isArray(attempt?.safety_issues) ? attempt.safety_issues : []),
+              ...(Array.isArray(attempt?.quality_issues) ? attempt.quality_issues : []),
+              ...(Array.isArray(attempt?.ai_review_issues) ? attempt.ai_review_issues : []),
+            ].filter(Boolean);
+            return (
+              <li key={`${attempt?.attempt ?? index}-${attempt?.failure_signature ?? "failure"}`}>
+                第 {attempt?.attempt ?? index + 1} 次（{attempt?.phase ?? "審查"}）：
+                {issues.slice(0, 2).join("；") || "未提供詳細錯誤"}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ScriptsTab({
+  classId,
+  sessionId,
+  readOnly = false,
+  initialSelectedId = null,
+  onScriptApproved,
+}) {
   const toast = useToast();
   const [scripts, setScripts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1933,6 +1988,10 @@ function ScriptsTab({ classId, sessionId, readOnly = false, onScriptApproved }) 
   useEffect(() => {
     fetchScripts();
   }, [fetchScripts]);
+
+  useEffect(() => {
+    if (initialSelectedId) setSelectedId(initialSelectedId);
+  }, [initialSelectedId]);
 
   const selected = useMemo(() => {
     if (scripts.length === 0) return null;
@@ -2033,17 +2092,17 @@ function ScriptsTab({ classId, sessionId, readOnly = false, onScriptApproved }) 
                   {selected.name} v{selected.version}
                 </h4>
                 <div className={styles.sectionActions}>
-                  <button
-                    type="button"
-                    className={styles.btnPrimary}
-                    onClick={handleApprove}
-                    disabled={
-                      readOnly || selected.status !== "reviewed" || actionPending !== null
-                    }
-                  >
-                    <MIcon name="check_circle" size={16} />
-                    {actionPending === "approve" ? "核准中..." : "核准"}
-                  </button>
+                  {selected.status === "reviewed" && (
+                    <button
+                      type="button"
+                      className={styles.btnPrimary}
+                      onClick={handleApprove}
+                      disabled={readOnly || actionPending !== null}
+                    >
+                      <MIcon name="check_circle" size={16} />
+                      {actionPending === "approve" ? "核准中..." : "核准"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className={styles.btnSecondary}
@@ -2071,6 +2130,8 @@ function ScriptsTab({ classId, sessionId, readOnly = false, onScriptApproved }) 
                 <ReviewPanel title="規則檢查（靜態）" result={selected.policy_check_result_json} />
                 <ReviewPanel title="AI 檢查" result={selected.ai_review_result_json} />
               </div>
+
+              <RetrySummary script={selected} />
 
               <pre className={styles.codeBlock}>{selected.script_content}</pre>
             </div>
@@ -2579,7 +2640,7 @@ function ExecutionTab({ classId, sessionId, readOnly = false, members }) {
               </select>
               {approvedScripts.length === 0 && (
                 <span className={styles.fileMeta}>
-          目前沒有已核准的檢查腳本，請先到腳本總覽分頁核准。
+                  目前沒有已通過自動檢查的腳本，請先完成檢查腳本產生。
                 </span>
               )}
             </label>
@@ -2643,6 +2704,7 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
   const [sessions, setSessions] = useState([]);
   const [statusFilter, setStatusFilter] = useState("active");
   const [activeSessionId, setActiveSessionId] = useState(null);
+  const [focusedScriptId, setFocusedScriptId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [creationView, setCreationView] = useState(null);
   const [openMenuId, setOpenMenuId] = useState(null);
@@ -2705,6 +2767,7 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
   }, [closeSessionMenu, loadSessions]);
 
   useEffect(() => {
+    setFocusedScriptId(null);
     setRenameTarget(null);
     setRenameTitle("");
     closeSessionMenu();
@@ -2959,8 +3022,8 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
         <section className={styles.sessionMain}>
           {creationView === "choose" ? <CreateCheckChooser onChoose={handleCreationChoice} onCancel={() => setCreationView(null)} /> : creationView ? <CreateCheckForm key={creationView} classId={classId} weeks={weeks} embedded initialMode={creationView} onClose={() => setCreationView("choose")} onCreated={handleCreated} /> : !activeSession ? <div className={styles.card}><div className={styles.mainEmpty}><MIcon name="checklist" size={30} /><p>{statusFilter === "active" ? "請從左側選擇一項檢查，或新增檢查。" : "請選擇已封存的檢查查看內容與結果。"}</p><button type="button" className={styles.btnPrimary} onClick={() => statusFilter === "active" ? setCreationView("choose") : setStatusFilter("active")}>{statusFilter === "active" ? "新增檢查" : "查看進行中"}</button></div></div> : <>
             <div className={styles.subTabs} role="tablist" aria-label="檢查工作頁籤">{TEACHER_JUDGE_TABS.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={activeTab === tab.key} className={activeTab === tab.key ? styles.subTabActive : styles.subTab} onClick={() => setActiveTab(tab.key)}><MIcon name={tab.icon} size={16} />{tab.label}</button>)}</div>
-            {activeTab === "rubrics" && <RubricsTab key={activeSession.id} classId={classId} judgeSession={activeSession} onSessionUpdated={updateSessionInList} onScriptCreated={() => { loadSessions(); setActiveTab("scripts"); }} />}
-            {activeTab === "scripts" && <ScriptsTab classId={classId} sessionId={activeSession.id} readOnly={activeSession.status === "archived"} onScriptApproved={() => setActiveTab("execution")} />}
+            {activeTab === "rubrics" && <RubricsTab key={activeSession.id} classId={classId} judgeSession={activeSession} onSessionUpdated={updateSessionInList} onScriptCreated={(artifact) => { loadSessions(); const destination = getScriptCreationDestination(artifact); setFocusedScriptId(destination === "scripts" ? (artifact?.id ?? null) : null); setActiveTab(destination); }} />}
+            {activeTab === "scripts" && <ScriptsTab classId={classId} sessionId={activeSession.id} readOnly={activeSession.status === "archived"} initialSelectedId={focusedScriptId} onScriptApproved={() => setActiveTab("execution")} />}
             {activeTab === "execution" && <ExecutionTab classId={classId} sessionId={activeSession.id} readOnly={activeSession.status === "archived"} members={members} />}
           </>}
         </section>

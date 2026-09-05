@@ -12,6 +12,7 @@ import {
   getPendingRubricItemIds,
   getSessionMenuPosition,
   getSelectedRubricSource,
+  getScriptCreationDestination,
   resolveActiveSessionId,
 } from "./AiJudgePanel";
 import { RUBRIC_POLISH_PROMPT } from "../../../services/aiJudge";
@@ -288,5 +289,12 @@ describe("resolveActiveSessionId", () => {
   test("保留仍存在的選擇，清除已不存在的選擇", () => {
     expect(resolveActiveSessionId("session-2", sessions)).toBe("session-2");
     expect(resolveActiveSessionId("session-missing", sessions)).toBeNull();
+  });
+});
+
+describe("script creation workflow", () => {
+  test("通過自動檢查後進入執行結果，失敗時進入腳本總覽", () => {
+    expect(getScriptCreationDestination({ status: "approved" })).toBe("execution");
+    expect(getScriptCreationDestination({ status: "review_failed", id: "script-1" })).toBe("scripts");
   });
 });
