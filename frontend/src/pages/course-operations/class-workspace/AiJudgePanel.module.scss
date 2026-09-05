@@ -253,44 +253,6 @@
   color: var(--color-text-secondary);
 }
 
-.chipBtns {
-  display: flex;
-  flex-wrap: wrap;
-  gap: $spacing-8;
-}
-
-.chipBtn,
-.chipBtnActive {
-  min-height: 32px;
-  padding: 4px $spacing-16;
-  border-radius: $radius-8;
-  font-size: $font-size-14;
-  cursor: pointer;
-  transition: background $transition-base, color $transition-base, border-color $transition-base;
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-}
-
-.chipBtn {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-
-  &:hover:not(:disabled) {
-    background: var(--color-hover);
-    color: var(--color-text-primary);
-  }
-}
-
-.chipBtnActive {
-  background: var(--color-primary);
-  border: 1px solid var(--color-primary);
-  color: var(--color-text-on-primary);
-}
-
 .uploaderWrap {
   @include flex-column;
   gap: $spacing-16;
@@ -1264,11 +1226,6 @@
   width: 100%;
   min-height: 42px;
   font-size: $font-size-14;
-}
-
-.sessionFilters {
-  display: flex;
-  gap: $spacing-8;
 }
 
 .sessionList {

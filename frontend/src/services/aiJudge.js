@@ -59,10 +59,8 @@ export function shouldDisplayChatMessage(message) {
 export const AiJudgeService = {
   /* ── 持久化檢查 Session ── */
 
-  listSessions(classId, status = "active") {
-    return apiGet(
-      `/api/v1/teaching-classes/${classId}/judge/sessions/?status=${encodeURIComponent(status)}`,
-    );
+  listSessions(classId) {
+    return apiGet(`/api/v1/teaching-classes/${classId}/judge/sessions/`);
   },
 
   createSession(classId, {
@@ -113,13 +111,6 @@ export const AiJudgeService = {
     return apiPost(
       `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}/fork`,
       title ? { title } : {},
-    );
-  },
-
-  archiveSession(classId, sessionId) {
-    return apiPost(
-      `/api/v1/teaching-classes/${classId}/judge/sessions/${sessionId}/archive`,
-      {},
     );
   },
 

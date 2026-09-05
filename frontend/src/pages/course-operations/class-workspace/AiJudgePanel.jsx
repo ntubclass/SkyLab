@@ -245,7 +245,7 @@ function ProposalPanel({ proposal, selectedIds, onToggle, onApply, onSkip, disab
     <div className={styles.proposalCard}>
       <div className={styles.proposalHeading}>
         <div className={styles.createCheckBody}>
-          <strong>{isRefine ? "AI 潤飾評分表提案" : "AI 評分表提案"}</strong>
+          <strong>{isRefine ? "AI一鍵整理提案" : "AI 評分表提案"}</strong>
           <p>{isRefine ? "請逐項確認評分目標、描述、成功條件與檢查設定後再套用。" : "逐項確認後才會套用到目前的評分表。"}</p>
         </div>
         <span>{selectedIds.size}/{proposal.length} 項</span>
@@ -678,9 +678,10 @@ export function ChatPanel({
             className={styles.btnSecondary}
             disabled={isLoading || isClearing || isUploading || disabled || !hasRubric}
             onClick={() => onSendMessage(RUBRIC_POLISH_PROMPT, true)}
+            title="(好用) AI幫助你把評分表規則化，後續方便腳本生成"
           >
             {isLoading ? <Spinner size={14} /> : <MIcon name="auto_fix_high" size={14} />}
-            潤飾評分表
+            AI一鍵整理
           </button>
           {onToggleSources && <button
             type="button"
@@ -1062,7 +1063,7 @@ export function resolveActiveSessionId(currentId, sessions) {
   return sessions.some((session) => session.id === currentId) ? currentId : null;
 }
 
-function RubricSourceRail({ classId, judgeSession, readOnly, onSessionUpdated, onClose, embedded = false }) {
+function RubricSourceRail({ classId, judgeSession, onSessionUpdated, onClose, embedded = false }) {
   const toast = useToast();
   const sourceRailRef = useRef(null);
   const [files, setFiles] = useState([]);
@@ -1159,9 +1160,9 @@ function RubricSourceRail({ classId, judgeSession, readOnly, onSessionUpdated, o
       </div>
       {loading ? <p className={styles.mutedText}>載入來源中…</p> : visibleFiles.length > 0 ? (
         <div className={styles.sourceList}>
-           {visibleFiles.map((file) => <div key={file.id} className={`${styles.sourceRow} ${file.id === selectedFileId ? styles.sourceRowSelected : ""}`}><div className={styles.sourceSelect} aria-current="true"><span className={styles.sourceIndicator} aria-hidden="true"><MIcon name="radio_button_checked" size={17} /></span><span className={styles.sourceText}><b>{getRubricDisplayName(file, "未命名評分表")}</b><small>{(file.environment_keys?.length ? file.environment_keys : [file.template_key]).map(getTemplateLabel).join("、")} · {file.analysis_json?.items?.length ?? 0} 項 · {formatDateTime(file.updated_at)} · {file.source_type === "created" ? "建立於系統" : "已上傳"}</small><em>已選用</em></span></div>{(file.source_type !== "created" || !readOnly) && <div className={styles.sourceActions}><button type="button" className={styles.iconBtn} aria-label={`管理 ${getRubricDisplayName(file)}`} title="管理資料來源" aria-haspopup="menu" aria-expanded={openMenuId === file.id} onClick={(event) => { event.stopPropagation(); setOpenMenuId((current) => current === file.id ? null : file.id); }}><MIcon name="more_vert" size={18} /></button>{sourceMenuKeep.item === file.id && <div className={`${styles.sourceMenu} ${sourceMenuKeep.closing ? styles.sessionMenuOut : ""}`} role="menu">{file.source_type !== "created" && <button type="button" role="menuitem" onClick={() => download(file)}><MIcon name="download" size={15} />下載原始文件</button>}{!readOnly && <button type="button" role="menuitem" className={styles.menuDanger} disabled={busyId === file.id} onClick={() => remove(file)}><MIcon name="delete" size={15} />刪除來源</button>}</div>}</div>}</div>)}
+           {visibleFiles.map((file) => <div key={file.id} className={`${styles.sourceRow} ${file.id === selectedFileId ? styles.sourceRowSelected : ""}`}><div className={styles.sourceSelect} aria-current="true"><span className={styles.sourceIndicator} aria-hidden="true"><MIcon name="radio_button_checked" size={17} /></span><span className={styles.sourceText}><b>{getRubricDisplayName(file, "未命名評分表")}</b><small>{(file.environment_keys?.length ? file.environment_keys : [file.template_key]).map(getTemplateLabel).join("、")} · {file.analysis_json?.items?.length ?? 0} 項 · {formatDateTime(file.updated_at)} · {file.source_type === "created" ? "建立於系統" : "已上傳"}</small><em>已選用</em></span></div><div className={styles.sourceActions}><button type="button" className={styles.iconBtn} aria-label={`管理 ${getRubricDisplayName(file)}`} title="管理資料來源" aria-haspopup="menu" aria-expanded={openMenuId === file.id} onClick={(event) => { event.stopPropagation(); setOpenMenuId((current) => current === file.id ? null : file.id); }}><MIcon name="more_vert" size={18} /></button>{sourceMenuKeep.item === file.id && <div className={`${styles.sourceMenu} ${sourceMenuKeep.closing ? styles.sessionMenuOut : ""}`} role="menu">{file.source_type !== "created" && <button type="button" role="menuitem" onClick={() => download(file)}><MIcon name="download" size={15} />下載原始文件</button>}<button type="button" role="menuitem" className={styles.menuDanger} disabled={busyId === file.id} onClick={() => remove(file)}><MIcon name="delete" size={15} />刪除來源</button></div>}</div></div>)}
         </div>
-      ) : <div className={styles.sourceEmpty}><MIcon name="description" size={24} /><p>{selectedFileId ? "目前資料來源已無法使用，請用聊天室輸入框旁的＋重新上傳。" : readOnly ? "這項檢查沒有資料來源。" : "請用聊天室輸入框旁的＋上傳文件。"}</p></div>}
+      ) : <div className={styles.sourceEmpty}><MIcon name="description" size={24} /><p>{selectedFileId ? "目前資料來源已無法使用，請用聊天室輸入框旁的＋重新上傳。" : "請用聊天室輸入框旁的＋上傳文件。"}</p></div>}
     </aside>
   );
 }
@@ -1204,8 +1205,6 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
   const toastRef = useRef(toast);
   classIdRef.current = classId;
   toastRef.current = toast;
-  const readOnly = judgeSession?.status === "archived";
-
   useEffect(() => {
     if (!sourcesOpen) return undefined;
     function closeOnEscape(event) {
@@ -1423,7 +1422,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
   }
 
   async function handleAddAttachment(file) {
-    if (!judgeSession?.id || readOnly || !file) return false;
+    if (!judgeSession?.id || !file) return false;
     if (pendingAttachments.length >= 5) {
       toast.error("單次最多附加 5 個文件。");
       return false;
@@ -1462,7 +1461,6 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
 
   async function handleSendMessage(content, isRefine = false, attachments = []) {
     if (!judgeSession?.id && !analysis) return;
-    if (judgeSession?.status === "archived") return;
     if (attachments.length && !judgeSession?.id) {
       toast.error("附件需要在已保存的檢查中送出。");
       return;
@@ -1631,7 +1629,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
   }
 
   async function handleClearMessages() {
-    if (isClearingMessages || isChatting || !messages.length || readOnly) return;
+    if (isClearingMessages || isChatting || !messages.length) return;
     setIsClearingMessages(true);
     try {
       if (judgeSession?.id) {
@@ -1713,7 +1711,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
             type="button"
             className={styles.btnPrimary}
             onClick={handleCreateScript}
-            disabled={isCreatingScript || isChatting || readOnly || items.length === 0}
+            disabled={isCreatingScript || isChatting || items.length === 0}
             title={items.length === 0 ? "請先新增至少一個檢查項目" : undefined}
           >
             {isCreatingScript ? <Spinner /> : <MIcon name="auto_fix_high" size={16} />}
@@ -1751,7 +1749,6 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
                     type="button"
                     className={styles.btnSecondary}
                     onClick={handleAddItem}
-                    disabled={readOnly}
                   >
                     <MIcon name="add" size={16} />
                     新增項目
@@ -1761,7 +1758,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
                   items={items}
                   onChange={handleItemChange}
                   onDelete={handleItemDelete}
-                  disabled={isChatting || readOnly}
+                  disabled={isChatting}
                   needsReviewIds={pendingReviewIds}
                 />
               </div>
@@ -1781,7 +1778,6 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
               onClearMessages={handleClearMessages}
               isLoading={isChatting}
               isClearing={isClearingMessages}
-              disabled={readOnly}
               hasRubric={Boolean(analysis)}
               onToggleSources={judgeSession?.id ? () => setSourcesOpen((current) => !current) : undefined}
               sourcesOpen={sourcesOpen}
@@ -1789,15 +1785,14 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
                 <RubricSourceRail
                   classId={classId}
                   judgeSession={judgeSession}
-                  readOnly={readOnly}
                   onSessionUpdated={onSessionUpdated}
                   onClose={() => setSourcesOpen(false)}
                   embedded
                 />
               ) : null}
               pendingAttachments={pendingAttachments}
-              onRemoveAttachment={readOnly ? undefined : handleRemoveAttachment}
-              onUploadFile={readOnly || !judgeSession?.id ? undefined : handleAddAttachment}
+              onRemoveAttachment={handleRemoveAttachment}
+              onUploadFile={!judgeSession?.id ? undefined : handleAddAttachment}
               isUploading={isUploading}
             />
             {pendingProposal && analysis && <ProposalPanel
@@ -1816,7 +1811,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
                 setPendingProposalIsRefine(false);
               }}
               isRefine={pendingProposalIsRefine}
-              disabled={readOnly || isChatting || isClearingMessages}
+              disabled={isChatting || isClearingMessages}
             />}
           </div>
         </div>
@@ -1935,7 +1930,9 @@ function RetrySummary({ script }) {
       <p>
         <strong className={styles.dangerText}>{stopReason}</strong>
       </p>
-      <p>Agent 已自動修正 {retryCount} 次；仍未通過時，請檢查下列原因後重新生成。</p>
+      <p>
+        Agent 已自動修正 {retryCount} 次；仍未通過時，請檢查下列原因，回到評分表調整後重新製作檢查腳本。
+      </p>
       {attempts.length > 0 && (
         <ul className={styles.reviewIssues}>
           {attempts.slice(-3).map((attempt, index) => {
@@ -1960,7 +1957,6 @@ function RetrySummary({ script }) {
 function ScriptsTab({
   classId,
   sessionId,
-  readOnly = false,
   initialSelectedId = null,
   onScriptApproved,
 }) {
@@ -1971,7 +1967,7 @@ function ScriptsTab({
   const [selectedId, setSelectedId] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [actionPending, setActionPending] = useState(null);
-  const deleteScriptDialog = useDialogPresence(deleteTarget); // "approve" | "regenerate" | "delete"
+  const deleteScriptDialog = useDialogPresence(deleteTarget); // "approve" | "delete"
 
   const fetchScripts = useCallback(async () => {
     setLoading(true);
@@ -2007,20 +2003,6 @@ function ScriptsTab({
       onScriptApproved?.();
     } catch (err) {
       toast.error(err?.message ?? "核准失敗");
-    } finally {
-      setActionPending(null);
-    }
-  }
-
-  async function handleRegenerate() {
-    setActionPending("regenerate");
-    try {
-      const script = await AiJudgeService.regenerateScript(classId, selected.id);
-      setSelectedId(script.id);
-      toast.success("檢查腳本已重新生成");
-      fetchScripts();
-    } catch (err) {
-      toast.error(err?.message ?? "重新生成失敗");
     } finally {
       setActionPending(null);
     }
@@ -2097,7 +2079,7 @@ function ScriptsTab({
                       type="button"
                       className={styles.btnPrimary}
                       onClick={handleApprove}
-                      disabled={readOnly || actionPending !== null}
+                      disabled={actionPending !== null}
                     >
                       <MIcon name="check_circle" size={16} />
                       {actionPending === "approve" ? "核准中..." : "核准"}
@@ -2106,19 +2088,8 @@ function ScriptsTab({
                   <button
                     type="button"
                     className={styles.btnSecondary}
-                    onClick={handleRegenerate}
-                    disabled={
-                      readOnly || selected.status === "archived" || actionPending !== null
-                    }
-                  >
-                    {actionPending === "regenerate" ? <Spinner /> : <MIcon name="refresh" size={16} />}
-                    {actionPending === "regenerate" ? "生成中..." : "重新生成"}
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.btnSecondary}
                     onClick={() => setDeleteTarget(selected)}
-                    disabled={readOnly || actionPending !== null}
+                    disabled={actionPending !== null}
                   >
                     <MIcon name="delete" size={16} />
                     刪除腳本
@@ -2142,7 +2113,7 @@ function ScriptsTab({
       {deleteScriptDialog.open && (
         <ConfirmModal
           title="確認刪除檢查腳本？"
-          description={`你即將永久刪除「${deleteScriptDialog.item.name}」v${deleteScriptDialog.item.version}。刪除後無法再查看、核准或重新生成。`}
+          description={`你即將永久刪除「${deleteScriptDialog.item.name}」v${deleteScriptDialog.item.version}。刪除後無法再查看或核准。`}
           closing={deleteScriptDialog.closing}
           onClose={() => {
             if (actionPending !== "delete") setDeleteTarget(null);
@@ -2259,7 +2230,7 @@ function formatUsage(value) {
   return `${Math.round(value)}%`;
 }
 
-function ExecutionTab({ classId, sessionId, readOnly = false, members }) {
+function ExecutionTab({ classId, sessionId, members }) {
   const toast = useToast();
   const [selectedVmids, setSelectedVmids] = useState([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -2411,9 +2382,7 @@ function ExecutionTab({ classId, sessionId, readOnly = false, members }) {
             type="button"
             className={styles.btnPrimary}
             onClick={() => setDialogOpen(true)}
-            disabled={
-              readOnly || selectedVmids.length === 0 || approvedScripts.length === 0
-            }
+            disabled={selectedVmids.length === 0 || approvedScripts.length === 0}
           >
             <MIcon name="play_circle_outline" size={16} />
             執行腳本
@@ -2702,7 +2671,6 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
   const requestedSessionId = searchParams.get("check");
   const [activeTab, setActiveTab] = useState("rubrics");
   const [sessions, setSessions] = useState([]);
-  const [statusFilter, setStatusFilter] = useState("active");
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [focusedScriptId, setFocusedScriptId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2736,7 +2704,7 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
     const requestClassId = classId;
     setLoading(true);
     try {
-      const rows = await AiJudgeService.listSessions(classId, statusFilter);
+      const rows = await AiJudgeService.listSessions(classId);
       if (requestVersion !== requestVersionRef.current || classIdRef.current !== requestClassId) return;
       setSessions(rows);
       setActiveSessionId((current) => {
@@ -2753,7 +2721,7 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
     } finally {
       if (requestVersion === requestVersionRef.current && classIdRef.current === requestClassId) setLoading(false);
     }
-  }, [classId, requestedSessionId, statusFilter, toast]);
+  }, [classId, requestedSessionId, toast]);
 
   useEffect(() => {
     classIdRef.current = classId;
@@ -2771,7 +2739,7 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
     setRenameTarget(null);
     setRenameTitle("");
     closeSessionMenu();
-  }, [activeSessionId, closeSessionMenu, statusFilter]);
+  }, [activeSessionId, closeSessionMenu]);
 
   useEffect(() => {
     if (!openMenuId) return undefined;
@@ -2835,7 +2803,6 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
   function handleCreated(created) {
     if (classIdRef.current !== classId) return;
     setCreationView(null);
-    setStatusFilter("active");
     setSessions((current) => [created, ...current.filter((item) => item.id !== created.id)]);
     setActiveSessionId(created.id);
     setActiveTab("rubrics");
@@ -2851,7 +2818,7 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
       const updated = await action(item);
       if (classIdRef.current !== requestClassId) return null;
       if (updated) {
-        if (updated.status !== statusFilter) {
+        if (updated.status === "deleted") {
           setSessions((current) => current.filter((entry) => entry.id !== item.id));
           if (item.id === activeSessionId) setActiveSessionId(null);
         } else {
@@ -2878,20 +2845,9 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
     loadSessions();
   }
 
-  async function archiveSession(item) {
-    const updated = await runSessionAction(item, (entry) => AiJudgeService.archiveSession(classId, entry.id));
-    if (updated) toast.success(`「${item.title}」已移至已封存。`);
-  }
-
-  async function restoreSession(item) {
-    const updated = await runSessionAction(item, (entry) => AiJudgeService.updateSession(classId, entry.id, { status: "active" }));
-    if (updated) toast.success(`「${item.title}」已恢復至進行中。`);
-  }
-
   async function forkSession(item) {
     const copy = await runSessionAction(item, (entry) => AiJudgeService.forkSession(classId, entry.id));
     if (!copy) return;
-    setStatusFilter("active");
     setSessions((current) => [copy, ...current.filter((entry) => entry.id !== copy.id)]);
     setActiveSessionId(copy.id);
     setActiveTab("rubrics");
@@ -2952,13 +2908,10 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
         aria-label={`「${item.title}」更多功能`}
         style={{ top: `${menuPos.top}px`, left: `${menuPos.left}px` }}
       >
-        {item.status === "active" && <>
-          <button type="button" role="menuitem" disabled={busy} onClick={() => { setRenameTarget(item); setRenameTitle(item.title); closeSessionMenu(); }}><MIcon name="edit" size={16} />重新命名</button>
-          <button type="button" role="menuitem" disabled={busy} onClick={() => pinSession(item)}><MIcon name="push_pin" filled={Boolean(item.pinned_at)} size={16} />{item.pinned_at ? "取消釘選" : "釘選"}</button>
-        </>}
+        <button type="button" role="menuitem" disabled={busy} onClick={() => { setRenameTarget(item); setRenameTitle(item.title); closeSessionMenu(); }}><MIcon name="edit" size={16} />重新命名</button>
+        <button type="button" role="menuitem" disabled={busy} onClick={() => pinSession(item)}><MIcon name="push_pin" filled={Boolean(item.pinned_at)} size={16} />{item.pinned_at ? "取消釘選" : "釘選"}</button>
         <button type="button" role="menuitem" disabled={busy} onClick={() => forkSession(item)}><MIcon name="fork_right" size={16} />重構</button>
         <span className={styles.menuSeparator} />
-        {item.status === "active" ? <button type="button" role="menuitem" disabled={busy} onClick={() => archiveSession(item)}><MIcon name="archive" size={16} />封存</button> : <button type="button" role="menuitem" disabled={busy} onClick={() => restoreSession(item)}><MIcon name="unarchive" size={16} />還原至進行中</button>}
         <button type="button" role="menuitem" className={styles.menuDanger} disabled={busy} onClick={() => deleteSession(item)}><MIcon name="delete" size={16} />刪除</button>
       </div>
     );
@@ -2974,11 +2927,8 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
       <div className={styles.sessionWorkspace}>
         <aside className={styles.sessionSidebar} aria-label="檢查清單">
            <button type="button" className={`${styles.btnPrimary} ${styles.newCheckButton}`} onClick={() => setCreationView("choose")}><MIcon name="add" size={17} />新增檢查</button>
-          <div className={styles.sessionFilters} role="tablist" aria-label="檢查狀態">
-            {[["active", "進行中"], ["archived", "已封存"]].map(([status, label]) => <button key={status} type="button" role="tab" aria-selected={statusFilter === status} className={statusFilter === status ? styles.chipBtnActive : styles.chipBtn} onClick={() => { setCreationView(null); setStatusFilter(status); }}>{label}</button>)}
-          </div>
           <div className={styles.sessionList} role="list">
-            {loading ? <p className={styles.mutedText}>載入中…</p> : sessions.length === 0 ? <div className={styles.sidebarEmpty}><MIcon name="checklist" size={24} /><p>{statusFilter === "active" ? "尚未建立檢查。新增時可從零建立評分表，或上傳資料文件，再與 AI 討論並調整。" : "目前沒有已封存的檢查。"}</p></div> : sessions.map((item) => {
+            {loading ? <p className={styles.mutedText}>載入中…</p> : sessions.length === 0 ? <div className={styles.sidebarEmpty}><MIcon name="checklist" size={24} /><p>尚未建立檢查。新增時可從零建立評分表，或上傳資料文件，再與 AI 討論並調整。</p></div> : sessions.map((item) => {
               const selected = item.id === activeSessionId;
                const busy = busySessionIds.has(item.id);
                const renaming = renameTarget?.id === item.id;
@@ -3009,7 +2959,7 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
                    )}
                    <div className={styles.sessionRowActions}>
                      {renaming ? <button type="button" className={styles.iconBtn} aria-label="取消重新命名" title="取消" onClick={cancelRename}><MIcon name="close" size={17} /></button> : <>
-                       {statusFilter === "active" && <button type="button" className={`${styles.iconBtn} ${item.pinned_at ? styles.pinActive : ""}`} aria-label={item.pinned_at ? `取消釘選「${item.title}」` : `釘選「${item.title}」`} aria-pressed={Boolean(item.pinned_at)} title={item.pinned_at ? "取消釘選" : "釘選"} disabled={busy} onClick={(event) => { event.stopPropagation(); pinSession(item); }}><MIcon name="push_pin" filled={Boolean(item.pinned_at)} size={17} /></button>}
+                       <button type="button" className={`${styles.iconBtn} ${item.pinned_at ? styles.pinActive : ""}`} aria-label={item.pinned_at ? `取消釘選「${item.title}」` : `釘選「${item.title}」`} aria-pressed={Boolean(item.pinned_at)} title={item.pinned_at ? "取消釘選" : "釘選"} disabled={busy} onClick={(event) => { event.stopPropagation(); pinSession(item); }}><MIcon name="push_pin" filled={Boolean(item.pinned_at)} size={17} /></button>
                        <button type="button" className={styles.iconBtn} aria-label={`更多「${item.title}」功能`} title="更多功能" aria-haspopup="menu" aria-expanded={openMenuId === item.id} aria-controls={`check-menu-${item.id}`} disabled={busy} onClick={(event) => toggleSessionMenu(event, item.id)}><MIcon name="more_vert" size={18} /></button>
                      </>}
                    </div>
@@ -3020,11 +2970,11 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
         </aside>
 
         <section className={styles.sessionMain}>
-          {creationView === "choose" ? <CreateCheckChooser onChoose={handleCreationChoice} onCancel={() => setCreationView(null)} /> : creationView ? <CreateCheckForm key={creationView} classId={classId} weeks={weeks} embedded initialMode={creationView} onClose={() => setCreationView("choose")} onCreated={handleCreated} /> : !activeSession ? <div className={styles.card}><div className={styles.mainEmpty}><MIcon name="checklist" size={30} /><p>{statusFilter === "active" ? "請從左側選擇一項檢查，或新增檢查。" : "請選擇已封存的檢查查看內容與結果。"}</p><button type="button" className={styles.btnPrimary} onClick={() => statusFilter === "active" ? setCreationView("choose") : setStatusFilter("active")}>{statusFilter === "active" ? "新增檢查" : "查看進行中"}</button></div></div> : <>
+          {creationView === "choose" ? <CreateCheckChooser onChoose={handleCreationChoice} onCancel={() => setCreationView(null)} /> : creationView ? <CreateCheckForm key={creationView} classId={classId} weeks={weeks} embedded initialMode={creationView} onClose={() => setCreationView("choose")} onCreated={handleCreated} /> : !activeSession ? <div className={styles.card}><div className={styles.mainEmpty}><MIcon name="checklist" size={30} /><p>請從左側選擇一項檢查，或新增檢查。</p><button type="button" className={styles.btnPrimary} onClick={() => setCreationView("choose")}>新增檢查</button></div></div> : <>
             <div className={styles.subTabs} role="tablist" aria-label="檢查工作頁籤">{TEACHER_JUDGE_TABS.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={activeTab === tab.key} className={activeTab === tab.key ? styles.subTabActive : styles.subTab} onClick={() => setActiveTab(tab.key)}><MIcon name={tab.icon} size={16} />{tab.label}</button>)}</div>
             {activeTab === "rubrics" && <RubricsTab key={activeSession.id} classId={classId} judgeSession={activeSession} onSessionUpdated={updateSessionInList} onScriptCreated={(artifact) => { loadSessions(); const destination = getScriptCreationDestination(artifact); setFocusedScriptId(destination === "scripts" ? (artifact?.id ?? null) : null); setActiveTab(destination); }} />}
-            {activeTab === "scripts" && <ScriptsTab classId={classId} sessionId={activeSession.id} readOnly={activeSession.status === "archived"} initialSelectedId={focusedScriptId} onScriptApproved={() => setActiveTab("execution")} />}
-            {activeTab === "execution" && <ExecutionTab classId={classId} sessionId={activeSession.id} readOnly={activeSession.status === "archived"} members={members} />}
+            {activeTab === "scripts" && <ScriptsTab classId={classId} sessionId={activeSession.id} initialSelectedId={focusedScriptId} onScriptApproved={() => setActiveTab("execution")} />}
+            {activeTab === "execution" && <ExecutionTab classId={classId} sessionId={activeSession.id} members={members} />}
           </>}
         </section>
       </div>

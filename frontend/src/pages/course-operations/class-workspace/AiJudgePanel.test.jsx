@@ -37,7 +37,7 @@ describe("ChatPanel", () => {
     expect(html).toContain("清除內容");
   });
 
-  test("在聊天室提供潤飾評分表與資料來源入口，不再提供自動檢測支援按鈕", () => {
+  test("在聊天室提供 AI 一鍵整理與資料來源入口，並在停留時說明用途", () => {
     const html = renderToStaticMarkup(
       <ChatPanel
         messages={[]}
@@ -48,7 +48,8 @@ describe("ChatPanel", () => {
       />,
     );
 
-    expect(html).toContain(">潤飾評分表</button>");
+    expect(html).toContain(">AI一鍵整理</button>");
+    expect(html).toContain('title="(好用) AI幫助你把評分表規則化，後續方便腳本生成"');
     expect(html).toContain("資料來源");
     expect(html).toContain('aria-controls="ai-chat-data-sources"');
     expect(html).not.toContain("評分表來源");
