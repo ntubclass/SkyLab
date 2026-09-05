@@ -2013,8 +2013,13 @@ function ScriptsTab({
   const [error, setError] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [renameTarget, setRenameTarget] = useState(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameInvalid, setRenameInvalid] = useState(false);
   const [actionPending, setActionPending] = useState(null);
   const deleteScriptDialog = useDialogPresence(deleteTarget); // "approve" | "delete"
+  const renameScriptDialog = useDialogPresence(renameTarget);
+  const renameInputRef = useRef(null);
 
   const fetchScripts = useCallback(async () => {
     setLoading(true);
@@ -2066,6 +2071,50 @@ function ScriptsTab({
       setScripts((current) => current.filter((script) => script.id !== deleteTarget.id));
     } catch (err) {
       toast.error(err?.message ?? "刪除失敗");
+    } finally {
+      setActionPending(null);
+    }
+  }
+
+  function openRenameDialog(script) {
+    if (!script || actionPending !== null) return;
+    setRenameTarget(script);
+    setRenameName(script.name ?? "");
+    setRenameInvalid(false);
+  }
+
+  function closeRenameDialog() {
+    if (actionPending === "rename") return;
+    setRenameTarget(null);
+    setRenameName("");
+    setRenameInvalid(false);
+  }
+
+  async function handleRename(event) {
+    event?.preventDefault?.();
+    const nextName = renameName.trim();
+    if (!renameTarget) return;
+    if (!nextName) {
+      setRenameInvalid(true);
+      focusInvalidField(renameInputRef.current);
+      return;
+    }
+    if (nextName === String(renameTarget.name ?? "").trim()) {
+      closeRenameDialog();
+      return;
+    }
+    setActionPending("rename");
+    try {
+      const updated = await AiJudgeService.renameScript(classId, renameTarget.id, nextName);
+      toast.success("檢查腳本已重新命名");
+      setScripts((current) =>
+        current.map((script) => (script.id === updated.id ? updated : script)),
+      );
+      setRenameTarget(null);
+      setRenameName("");
+      setRenameInvalid(false);
+    } catch (err) {
+      toast.error(err?.message ?? "重新命名失敗");
     } finally {
       setActionPending(null);
     }
@@ -2135,6 +2184,15 @@ function ScriptsTab({
                   <button
                     type="button"
                     className={styles.btnSecondary}
+                    onClick={() => openRenameDialog(selected)}
+                    disabled={actionPending !== null}
+                  >
+                    <MIcon name="edit" size={16} />
+                    重新命名
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.btnSecondary}
                     onClick={() => setDeleteTarget(selected)}
                     disabled={actionPending !== null}
                   >
@@ -2186,6 +2244,73 @@ function ScriptsTab({
             </>
           }
         />
+      )}
+
+      {renameScriptDialog.open && (
+        <div
+          className={`${styles.modalOverlay} ${renameScriptDialog.closing ? styles.modalOverlayOut : ""}`}
+          onMouseDown={closeRenameDialog}
+        >
+          <div
+            className={styles.confirm}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-script-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="rename-script-title">重新命名檢查腳本</h2>
+            <p>
+              {`正在重新命名「${renameScriptDialog.item.name}」v${renameScriptDialog.item.version}。名稱僅供老師辨識，不影響已產生的執行結果。`}
+            </p>
+            <form onSubmit={handleRename}>
+              <label className={styles.dialogField}>
+                腳本名稱
+                <input
+                  ref={renameInputRef}
+                  className={renameInvalid ? styles.fieldInvalid : undefined}
+                  // eslint-disable-next-line jsx-a11y/no-autofocus
+                  autoFocus
+                  value={renameName}
+                  maxLength={255}
+                  placeholder="例如：期中 Python 收集腳本"
+                  aria-label={`重新命名「${renameScriptDialog.item.name}」`}
+                  onChange={(event) => {
+                    setRenameName(event.target.value);
+                    setRenameInvalid(false);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      closeRenameDialog();
+                    }
+                  }}
+                />
+              </label>
+              {renameInvalid && (
+                <p className={styles.dangerText} role="alert">
+                  請輸入腳本名稱。
+                </p>
+              )}
+              <div className={styles.modalActions}>
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  disabled={actionPending === "rename"}
+                  onClick={closeRenameDialog}
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className={styles.btnPrimary}
+                  disabled={actionPending === "rename"}
+                >
+                  {actionPending === "rename" ? "儲存中..." : "確認重新命名"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

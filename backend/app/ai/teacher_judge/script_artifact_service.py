@@ -1429,6 +1429,31 @@ def archive_artifact(
     return _artifact_to_public(artifact)
 
 
+def rename_artifact(
+    *,
+    session: Session,
+    teaching_class_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    name: str,
+) -> TeacherJudgeScriptArtifactPublic:
+    artifact = get_artifact(
+        session=session,
+        teaching_class_id=teaching_class_id,
+        artifact_id=artifact_id,
+    )
+    new_name = name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail=t("artifact.name_blank"))
+    if len(new_name) > 255:
+        raise HTTPException(status_code=400, detail=t("artifact.name_blank"))
+    artifact.name = new_name
+    artifact.updated_at = _now()
+    session.add(artifact)
+    session.commit()
+    session.refresh(artifact)
+    return _artifact_to_public(artifact)
+
+
 def delete_artifact(
     *,
     session: Session,

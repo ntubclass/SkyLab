@@ -321,6 +321,13 @@ export const AiJudgeService = {
     return apiDelete(`/api/v1/teaching-classes/${classId}/judge/scripts/${scriptId}`);
   },
 
+  /** 重新命名腳本 */
+  renameScript(classId, scriptId, name) {
+    return apiPatch(`/api/v1/teaching-classes/${classId}/judge/scripts/${scriptId}`, {
+      name,
+    });
+  },
+
   /* ── 腳本執行 ── */
 
   /** 對指定 VMID 建立腳本執行任務 */
