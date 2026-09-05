@@ -564,6 +564,10 @@ export function ChatPanel({
   onRemoveAttachment,
   onUploadFile,
   isUploading = false,
+  onCreateScript,
+  isCreatingScript = false,
+  canCreateScript = false,
+  createScriptHint = "",
 }) {
   const [input, setInput] = useState("");
   const fileInputRef = useRef(null);
@@ -684,6 +688,18 @@ export function ChatPanel({
             {isLoading ? <Spinner size={14} /> : <MIcon name="auto_fix_high" size={14} />}
             AI一鍵整理
           </button>
+          {onCreateScript && (
+            <button
+              type="button"
+              className={styles.btnPrimary}
+              disabled={isLoading || isClearing || isUploading || disabled || isCreatingScript || !canCreateScript}
+              onClick={onCreateScript}
+              title={createScriptHint || undefined}
+            >
+              {isCreatingScript ? <Spinner size={14} /> : <MIcon name="terminal" size={14} />}
+              {isCreatingScript ? "製作中..." : "製作檢查腳本"}
+            </button>
+          )}
           {onToggleSources && <button
             type="button"
             className={styles.btnSecondary}
@@ -1192,7 +1208,7 @@ function RubricSourceRail({ classId, judgeSession, onSessionUpdated, onClose, em
 
 /* ── Tab 1：評分表 ──────────────────────────────────────── */
 
-function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }) {
+function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated, sidebar = null, tabsBar = null }) {
   const toast = useToast();
 
   const [files, setFiles] = useState([]);
@@ -1204,7 +1220,6 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [isChatting, setIsChatting] = useState(false);
   const [isClearingMessages, setIsClearingMessages] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
   const [isCreatingScript, setIsCreatingScript] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState("rubric");
   const [sourceFileId, setSourceFileId] = useState(null);
@@ -1697,19 +1712,6 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
     }
   }
 
-  async function handleExport() {
-    setIsExporting(true);
-    try {
-      const blob = await AiJudgeService.downloadExcel(analysis.items, analysis.summary);
-      downloadBlob(blob, "rubric.xlsx");
-      toast.success("Excel 下載成功");
-    } catch (err) {
-      toast.error(err?.message ?? "匯出失敗");
-    } finally {
-      setIsExporting(false);
-    }
-  }
-
   async function handleCreateScript() {
     setIsCreatingScript(true);
     try {
@@ -1741,32 +1743,6 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
 
   return (
     <div className={styles.tabBody}>
-      {(analysis || judgeSession?.id) && (
-        <div className={styles.tabToolbar}>
-          <button
-            hidden={!analysis}
-            type="button"
-            className={styles.btnSecondary}
-            onClick={handleExport}
-            disabled={isExporting}
-          >
-            {isExporting ? <Spinner /> : <MIcon name="download" size={16} />}
-            {isExporting ? "匯出中..." : "匯出 Excel"}
-          </button>
-          <button
-            hidden={!analysis}
-            type="button"
-            className={styles.btnPrimary}
-            onClick={handleCreateScript}
-            disabled={isCreatingScript || isChatting || items.length === 0}
-            title={items.length === 0 ? "請先新增至少一個檢查項目" : undefined}
-          >
-            {isCreatingScript ? <Spinner /> : <MIcon name="auto_fix_high" size={16} />}
-            {isCreatingScript ? "製作中..." : "製作檢查腳本"}
-          </button>
-        </div>
-      )}
-
       {isCreatingScript && (
         <div className={styles.noticeInfo}>
           <p>
@@ -1785,12 +1761,18 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
         </div>
       )}
 
-      <div className={styles.analysisGrid}>
-        <div className={styles.analysisMain}>
-           {analysis && (
+      <div className={sidebar ? styles.checkWorkspace : styles.analysisGrid}>
+        {sidebar && (
+          <aside className={`${styles.card} ${styles.checkSessionCol}`} aria-label="檢查清單">
+            {sidebar}
+          </aside>
+        )}
+        <div className={sidebar ? styles.checkRubricCol : styles.analysisMain}>
+           {analysis ? (
             <>
-              <div className={`${styles.card} ${styles.rubricTableCard}`}>
-                <div className={styles.cardHead}>
+              <div className={`${styles.card} ${styles.rubricTableCard} ${sidebar ? styles.checkRubricCard : ""}`}>
+                {sidebar && tabsBar && <div className={styles.checkTabsWrap}>{tabsBar}</div>}
+                <div className={`${styles.cardHead} ${sidebar ? styles.checkHead : ""}`}>
                   <h4 className={styles.cardTitle}>檢查項目（{items.length}）</h4>
                   <button
                     type="button"
@@ -1801,24 +1783,39 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
                     新增項目
                   </button>
                 </div>
-                <RubricTable
-                  items={items}
-                  onChange={handleItemChange}
-                  onDelete={handleItemDelete}
-                  disabled={isChatting}
-                  needsReviewIds={pendingReviewIds}
-                />
+                <div className={sidebar ? styles.checkRubricBody : undefined}>
+                  <RubricTable
+                    items={items}
+                    onChange={handleItemChange}
+                    onDelete={handleItemDelete}
+                    disabled={isChatting}
+                    needsReviewIds={pendingReviewIds}
+                  />
+                </div>
               </div>
             </>
-          )}
+          ) : sidebar ? (
+            <div className={`${styles.card} ${styles.checkRubricCard}`}>
+              {tabsBar && <div className={styles.checkTabsWrap}>{tabsBar}</div>}
+              <div className={`${styles.cardHead} ${styles.checkHead}`}>
+                <h4 className={styles.cardTitle}>檢查項目</h4>
+              </div>
+              <div className={styles.mainEmpty}>
+                <MIcon name="description" size={30} />
+                <p>尚未選擇評分表來源，請先上傳文件或與 AI 討論。</p>
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        <div className={styles.analysisAside}>
-          <div className={`${styles.card} ${styles.chatCard}`}>
-            <h4 className={styles.cardTitle}>
-              <MIcon name="smart_toy" size={18} />
-              AI 聊天室
-            </h4>
+        <div className={sidebar ? `${styles.card} ${styles.checkChatCol}` : styles.analysisAside}>
+          <div className={sidebar ? styles.checkChatInner : `${styles.card} ${styles.chatCard}`}>
+            <div className={sidebar ? styles.checkHead : undefined}>
+              <h4 className={styles.cardTitle}>
+                <MIcon name="smart_toy" size={18} />
+                AI 聊天室
+              </h4>
+            </div>
             <ChatPanel
               messages={messages}
               onSendMessage={handleSendMessage}
@@ -1841,6 +1838,10 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
               onRemoveAttachment={handleRemoveAttachment}
               onUploadFile={!judgeSession?.id ? undefined : handleAddAttachment}
               isUploading={isUploading}
+              onCreateScript={analysis ? handleCreateScript : undefined}
+              isCreatingScript={isCreatingScript}
+              canCreateScript={Boolean(analysis) && items.length > 0}
+              createScriptHint={items.length === 0 ? "請先新增至少一個檢查項目" : undefined}
             />
             {pendingProposal && analysis && <ProposalPanel
               proposal={pendingProposal}
@@ -3097,20 +3098,13 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
     );
   }
 
-  return (
-    <div className={styles.panel}>
-      <div className={styles.panelHeading}>
-        <h2 className={styles.panelTitle}><MIcon name="checklist" size={20} />AI 檢查</h2>
-        <p className={styles.panelDesc}>建立評分表、準備檢查腳本，並查看班級機器的執行結果。</p>
-      </div>
-
-      <div className={styles.sessionWorkspace}>
-        <aside className={styles.sessionSidebar} aria-label="檢查清單">
-           <button type="button" className={`${styles.btnPrimary} ${styles.newCheckButton}`} onClick={() => setCreationView("choose")}><MIcon name="add" size={17} />新增檢查</button>
-          <div className={styles.sessionList} role="list">
-            {loading ? <p className={styles.mutedText}>載入中…</p> : sessions.length === 0 ? <div className={styles.sidebarEmpty}><MIcon name="checklist" size={24} /><p>尚未建立檢查。新增時可從零建立評分表，或上傳資料文件，再與 AI 討論並調整。</p></div> : sessions.map((item) => {
-              const selected = item.id === activeSessionId;
-               const busy = busySessionIds.has(item.id);
+  const sessionSidebarInner = (
+    <>
+      <button type="button" className={`${styles.btnPrimary} ${styles.newCheckButton}`} onClick={() => setCreationView("choose")}><MIcon name="add" size={17} />新增檢查</button>
+      <div className={styles.sessionList} role="list">
+        {loading ? <p className={styles.mutedText}>載入中…</p> : sessions.length === 0 ? <div className={styles.sidebarEmpty}><MIcon name="checklist" size={24} /><p>尚未建立檢查。新增時可從零建立評分表，或上傳資料文件，再與 AI 討論並調整。</p></div> : sessions.map((item) => {
+          const selected = item.id === activeSessionId;
+           const busy = busySessionIds.has(item.id);
                const renaming = renameTarget?.id === item.id;
                return (
                  <div key={item.id} className={`${styles.sessionRow} ${selected ? styles.sessionRowActive : ""} ${renaming ? styles.sessionRowRenaming : ""}`} role="listitem">
@@ -3148,17 +3142,50 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
                );
             })}
           </div>
+    </>
+  );
+
+  const subTabsBar = (
+    <div className={styles.subTabs} role="tablist" aria-label="檢查工作頁籤">{TEACHER_JUDGE_TABS.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={activeTab === tab.key} className={activeTab === tab.key ? styles.subTabActive : styles.subTab} onClick={() => setActiveTab(tab.key)}><MIcon name={tab.icon} size={16} />{tab.label}</button>)}</div>
+  );
+
+  return (
+    <div className={styles.panel}>
+      <div className={styles.panelHeading}>
+        <h2 className={styles.panelTitle}><MIcon name="checklist" size={20} />AI 檢查</h2>
+        <p className={styles.panelDesc}>建立評分表、準備檢查腳本，並查看班級機器的執行結果。</p>
+      </div>
+
+      {!creationView && activeSession ? (
+        activeTab === "rubrics" ? (
+          <section className={styles.sessionMainFull} aria-label="檢查設定工作區">
+            <RubricsTab key={activeSession.id} classId={classId} judgeSession={activeSession} onSessionUpdated={updateSessionInList} sidebar={sessionSidebarInner} tabsBar={subTabsBar} onScriptCreated={(artifact) => { loadSessions(); const destination = getScriptCreationDestination(artifact); setFocusedScriptId(destination === "scripts" ? (artifact?.id ?? null) : null); setActiveTab(destination); }} />
+          </section>
+        ) : (
+          <section className={styles.sessionMainFull} aria-label="檢查工作區">
+            <div className={styles.checkWorkspaceTwo}>
+              <aside className={`${styles.card} ${styles.checkSessionCol}`} aria-label="檢查清單">
+                {sessionSidebarInner}
+              </aside>
+              <div className={styles.checkContentCol}>
+                <div className={`${styles.card} ${styles.checkTabsCard}`}>{subTabsBar}</div>
+                {activeTab === "scripts" && <ScriptsTab classId={classId} sessionId={activeSession.id} initialSelectedId={focusedScriptId} onScriptApproved={() => setActiveTab("execution")} />}
+                {activeTab === "execution" && <ExecutionTab classId={classId} sessionId={activeSession.id} members={members} />}
+              </div>
+            </div>
+          </section>
+        )
+      ) : (
+      <div className={styles.sessionWorkspace}>
+        <aside className={styles.sessionSidebar} aria-label="檢查清單">
+          {sessionSidebarInner}
         </aside>
 
         <section className={styles.sessionMain}>
-          {creationView === "choose" ? <CreateCheckChooser onChoose={handleCreationChoice} onCancel={() => setCreationView(null)} /> : creationView ? <CreateCheckForm key={creationView} classId={classId} weeks={weeks} embedded initialMode={creationView} onClose={() => setCreationView("choose")} onCreated={handleCreated} /> : !activeSession ? <div className={styles.card}><div className={styles.mainEmpty}><MIcon name="checklist" size={30} /><p>請從左側選擇一項檢查，或新增檢查。</p><button type="button" className={styles.btnPrimary} onClick={() => setCreationView("choose")}>新增檢查</button></div></div> : <>
-            <div className={styles.subTabs} role="tablist" aria-label="檢查工作頁籤">{TEACHER_JUDGE_TABS.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={activeTab === tab.key} className={activeTab === tab.key ? styles.subTabActive : styles.subTab} onClick={() => setActiveTab(tab.key)}><MIcon name={tab.icon} size={16} />{tab.label}</button>)}</div>
-            {activeTab === "rubrics" && <RubricsTab key={activeSession.id} classId={classId} judgeSession={activeSession} onSessionUpdated={updateSessionInList} onScriptCreated={(artifact) => { loadSessions(); const destination = getScriptCreationDestination(artifact); setFocusedScriptId(destination === "scripts" ? (artifact?.id ?? null) : null); setActiveTab(destination); }} />}
-            {activeTab === "scripts" && <ScriptsTab classId={classId} sessionId={activeSession.id} initialSelectedId={focusedScriptId} onScriptApproved={() => setActiveTab("execution")} />}
-            {activeTab === "execution" && <ExecutionTab classId={classId} sessionId={activeSession.id} members={members} />}
-          </>}
+          {creationView === "choose" ? <CreateCheckChooser onChoose={handleCreationChoice} onCancel={() => setCreationView(null)} /> : creationView ? <CreateCheckForm key={creationView} classId={classId} weeks={weeks} embedded initialMode={creationView} onClose={() => setCreationView("choose")} onCreated={handleCreated} /> : <div className={styles.card}><div className={styles.mainEmpty}><MIcon name="checklist" size={30} /><p>請從左側選擇一項檢查，或新增檢查。</p><button type="button" className={styles.btnPrimary} onClick={() => setCreationView("choose")}>新增檢查</button></div></div>}
         </section>
       </div>
+      )}
 
       {typeof document !== "undefined" && sessionMenuItemKeep.open && sessionMenuPos.item && createPortal(renderSessionMenu(sessionMenuItemKeep.item), document.body)}
 

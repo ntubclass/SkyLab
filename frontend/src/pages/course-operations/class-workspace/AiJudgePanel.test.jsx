@@ -94,6 +94,68 @@ describe("ChatPanel", () => {
     expect(html).toContain("requirements.md");
     expect(html).toContain("已讀取");
   });
+
+  test("聊天室整合製作檢查腳本按鈕，有評分表時才可點擊", () => {
+    const withScript = renderToStaticMarkup(
+      <ChatPanel
+        messages={[]}
+        onSendMessage={() => {}}
+        isLoading={false}
+        hasRubric
+        onCreateScript={() => {}}
+        canCreateScript
+      />,
+    );
+
+    expect(withScript).toContain("製作檢查腳本");
+    expect(withScript).not.toContain("匯出 Excel");
+    expect(withScript).not.toContain("匯出中");
+
+    const withoutItems = renderToStaticMarkup(
+      <ChatPanel
+        messages={[]}
+        onSendMessage={() => {}}
+        isLoading={false}
+        hasRubric
+        onCreateScript={() => {}}
+        canCreateScript={false}
+        createScriptHint="請先新增至少一個檢查項目"
+      />,
+    );
+
+    expect(withoutItems).toContain("製作檢查腳本");
+    expect(withoutItems).toContain("disabled");
+    expect(withoutItems).toContain('title="請先新增至少一個檢查項目"');
+  });
+
+  test("沒有評分表時不提供製作檢查腳本入口", () => {
+    const html = renderToStaticMarkup(
+      <ChatPanel
+        messages={[]}
+        onSendMessage={() => {}}
+        isLoading={false}
+      />,
+    );
+
+    expect(html).not.toContain("製作檢查腳本");
+    expect(html).not.toContain("匯出 Excel");
+  });
+
+  test("製作中時顯示製作中狀態", () => {
+    const html = renderToStaticMarkup(
+      <ChatPanel
+        messages={[]}
+        onSendMessage={() => {}}
+        isLoading={false}
+        hasRubric
+        onCreateScript={() => {}}
+        isCreatingScript
+        canCreateScript
+      />,
+    );
+
+    expect(html).toContain("製作中...");
+  });
 });
 
 describe("CreateCheckChooser", () => {

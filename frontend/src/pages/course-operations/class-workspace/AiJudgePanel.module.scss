@@ -1574,6 +1574,172 @@
   min-width: 0;
 }
 
+.sessionMainFull {
+  @include flex-column;
+  gap: $spacing-16;
+  min-width: 0;
+}
+
+/* ── 檢查設定三欄同高（session／評分表／AI 聊天室） ── */
+.checkWorkspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: $spacing-16;
+  align-items: start;
+
+  @include respond-to(xl) {
+    grid-template-columns: 230px minmax(0, 1.6fr) minmax(300px, 1fr);
+    align-items: stretch;
+  }
+}
+
+.checkSessionCol,
+.checkRubricCard,
+.checkChatCol {
+  min-width: 0;
+
+  @include respond-to(xl) {
+    // 三欄直接向下延伸到頁面底部：扣掉上方頁首＋面板標題＋間距；
+    // 超長內容仍以 max-height 截斷，改走欄內捲動
+    min-height: calc(100vh - 240px);
+    max-height: calc(100vh - 120px);
+  }
+}
+
+.checkSessionCol {
+  // 與右方兩卡共用 .card 的 24px 內距，讓三欄頂部對齊同一高度
+  @include respond-to(xl) {
+    overflow: hidden;
+  }
+
+  .newCheckButton {
+    flex: 0 0 auto;
+    min-height: 44px;
+  }
+
+  .sessionList {
+    @include respond-to(xl) {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: none;
+      overflow-y: auto;
+    }
+  }
+}
+
+.checkRubricCol {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.checkRubricCard {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+
+  @include respond-to(xl) {
+    overflow: hidden;
+  }
+}
+
+.checkRubricBody {
+  flex: 1 1 auto;
+  min-height: 0;
+
+  @include respond-to(xl) {
+    overflow: auto;
+  }
+
+  // 三欄模式中間欄較窄，放寬表格最小寬度以減少橫向捲動
+  @include respond-to(xl) {
+    .rubricTable {
+      min-width: 640px;
+    }
+  }
+}
+
+.checkChatCol {
+  @include respond-to(xl) {
+    overflow: hidden;
+  }
+}
+
+.checkChatInner {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+
+  .chatPanel {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .chatMessages {
+    @include respond-to(xl) {
+      flex: 1 1 auto;
+      min-height: 240px;
+      max-height: none;
+    }
+  }
+
+  .proposalCard {
+    flex: 0 0 auto;
+    max-height: 260px;
+    overflow-y: auto;
+  }
+}
+
+/* ── 執行結果／腳本總覽雙欄同高（沿用三欄設計語言） ── */
+.checkWorkspaceTwo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: $spacing-16;
+  align-items: start;
+
+  @include respond-to(xl) {
+    grid-template-columns: 230px minmax(0, 1fr);
+    align-items: stretch;
+  }
+}
+
+.checkContentCol {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: $spacing-16;
+}
+
+.checkTabsCard {
+  flex: 0 0 auto;
+  padding: $spacing-8 $spacing-16;
+}
+
+/* 檢查項目卡片頂部的頁籤條：維持與其他頁籤相同的固定大小 */
+.checkTabsWrap {
+  flex: 0 0 auto;
+  margin-bottom: $spacing-8;
+}
+
+/* 三欄頂部標頭統一高度：新增檢查／檢查項目／AI 聊天室對齊 */
+.checkHead {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-8;
+  min-height: 44px;
+  margin-bottom: $spacing-8;
+  padding-bottom: $spacing-8;
+  border-bottom: 1px solid var(--color-divider);
+
+  .cardTitle {
+    margin: 0;
+  }
+}
+
 .proposalCard {
   display: grid;
   gap: $spacing-16;
