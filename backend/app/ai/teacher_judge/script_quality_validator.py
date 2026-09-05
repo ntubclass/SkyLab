@@ -145,6 +145,47 @@ def _calls_named_helper(
     return False
 
 
+def _scan_calls_once(
+    tree: ast.AST,
+    aliases: dict[str, str],
+) -> tuple[list[ast.Call], set[str], set[str], set[str]]:
+    """Collect call-derived facts in a single AST walk.
+
+    Pure optimization: merges the five separate full-tree walks previously done
+    for json.dumps collection, _collect_commands_needing_which,
+    _collect_which_commands and _calls_named_helper (record_check / run_command
+    / command_available) into one pass. Name resolution reuses one _call_name
+    per Call node with the same aliases logic. The historical skip_functions
+    behaviour is preserved as-is (all calls are inspected, including those
+    inside helper definitions), so gate verdicts are unchanged.
+    """
+    json_dumps_calls: list[ast.Call] = []
+    subprocess_commands: set[str] = set()
+    which_commands: set[str] = set()
+    helper_calls: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _call_name(node.func, aliases)
+        if name == "json.dumps":
+            json_dumps_calls.append(node)
+        elif name == "subprocess.run":
+            if node.args:
+                first_arg = node.args[0]
+                if isinstance(first_arg, (ast.List, ast.Tuple)) and first_arg.elts:
+                    command = _literal_str(first_arg.elts[0])
+                    if command:
+                        subprocess_commands.add(command)
+        elif name == "shutil.which":
+            if node.args:
+                command = _literal_str(node.args[0])
+                if command:
+                    which_commands.add(command)
+        if name in ("record_check", "run_command", "command_available"):
+            helper_calls.add(name)
+    return json_dumps_calls, subprocess_commands, which_commands, helper_calls
+
+
 def _function_definitions(
     tree: ast.AST,
 ) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -385,19 +426,23 @@ def check_script_quality(script_content: str) -> CheckResult:
         issues.append("run_command 必須回傳 returncode")
         fix_hints.append({"type": "add_returncode_to_run_command", "description": "run_command 必須回傳 returncode"})
 
-    if not _calls_named_helper(tree, "record_check", aliases, skip_functions={"record_check"}):
+    # Single-pass call scan (replaces five separate full-tree walks for
+    # json.dumps / subprocess commands / which commands / helper calls).
+    # Legacy collectors (_collect_commands_needing_which,
+    # _collect_which_commands, _calls_named_helper) are kept as compat
+    # wrappers and no longer used on this hot path.
+    json_dumps_calls, commands, which_commands, helper_calls = _scan_calls_once(
+        tree, aliases
+    )
+
+    if "record_check" not in helper_calls:
         issues.append("腳本必須透過 record_check 建立檢查結果")
         fix_hints.append({"type": "add_record_check_calls", "description": "腳本必須透過 record_check 建立檢查結果"})
 
-    if not _calls_named_helper(tree, "run_command", aliases, skip_functions={"run_command"}):
+    if "run_command" not in helper_calls:
         issues.append("腳本必須透過 run_command 執行收集指令")
         fix_hints.append({"type": "add_run_command_calls", "description": "腳本必須透過 run_command 執行收集指令"})
 
-    json_dumps_calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and _call_name(node.func, aliases) == "json.dumps"
-    ]
     if not json_dumps_calls:
         issues.append("腳本必須使用 json.dumps 輸出 JSON")
         fix_hints.append({"type": "add_json_param", "function": "json.dumps", "param": "ensure_ascii", "value": False, "description": "腳本必須使用 json.dumps 輸出 JSON"})
@@ -416,21 +461,18 @@ def check_script_quality(script_content: str) -> CheckResult:
         issues.append("輸出 JSON metadata 必須包含 timestamp 與 platform")
         fix_hints.append({"type": "add_output_field", "field": "metadata", "description": "輸出 JSON metadata 必須包含 timestamp 與 platform"})
 
-    commands = _collect_commands_needing_which(tree, aliases)
-    which_commands = _collect_which_commands(tree, aliases)
     for command in sorted(commands - which_commands):
         issues.append(f"外部工具 `{command}` 缺少 shutil.which 可用性檢查")
         fix_hints.append({"type": "add_command_availability_check", "command": command, "description": f"外部工具 `{command}` 缺少 shutil.which 可用性檢查"})
 
-    if commands and not _calls_named_helper(
-        tree,
-        "command_available",
-        aliases,
-        skip_functions={"command_available"},
-    ):
+    if commands and "command_available" not in helper_calls:
         issues.append("腳本必須透過 command_available 檢查外部工具可用性")
         fix_hints.append({"type": "add_command_availability_check", "description": "腳本必須透過 command_available 檢查外部工具可用性"})
 
+    # Collect ExceptHandler nodes during the main walk below and reuse them for
+    # the errors-completeness check, instead of a second full-tree walk. Order
+    # matches `ast.walk` BFS in both cases, and the first-hit `break` is kept.
+    except_handlers: list[ast.ExceptHandler] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and _call_name(node.func, aliases) == "record_check":
             check_id = _record_check_literal_arg(node, 0, "check_id")
@@ -448,6 +490,7 @@ def check_script_quality(script_content: str) -> CheckResult:
                     issues.append("工具缺失時應回傳 unknown，不可使用 warning")
                     fix_hints.append({"type": "fix_status_semantics", "description": "工具缺失時應回傳 unknown，不可使用 warning"})
         elif isinstance(node, ast.ExceptHandler):
+            except_handlers.append(node)
             exception_name = _except_name(node, aliases)
             statuses = _body_record_check_statuses(node.body, aliases)
             if _body_marks_pass(node.body, aliases):
@@ -473,7 +516,8 @@ def check_script_quality(script_content: str) -> CheckResult:
     # ── errors 記錄完整性檢查 ──
     # 收集項目的 bare except / except Exception 必須有 errors.append。
     # run_command helper 可以把錯誤轉成結構化回傳值，再由呼叫點寫入 errors。
-    for handler in [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)]:
+    # Reuses handlers collected in the main walk above (same BFS order).
+    for handler in except_handlers:
         except_name = _except_name(handler, aliases)
         if (
             except_name in {None, "Exception"}

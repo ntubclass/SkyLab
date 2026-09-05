@@ -1173,6 +1173,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
   const toast = useToast();
 
   const [files, setFiles] = useState([]);
+  const [filesLoaded, setFilesLoaded] = useState(false);
 
   const [analysis, setAnalysis] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -1251,6 +1252,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
   const fetchFiles = useCallback(async (silent = false) => {
     try {
       setFiles(await AiJudgeService.listFiles(classId));
+      setFilesLoaded(true);
     } catch {
       if (!silent) toast.error("載入目前資料來源失敗，請稍後再試。");
     }
@@ -1283,9 +1285,31 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
   }, [classId, judgeSession?.id, toast]);
 
   useEffect(() => {
-    if (!judgeSession?.selected_file_id || files.length === 0) return;
+    function clearSelectedSourceState() {
+      setAnalysis(null);
+      setUploadedFileName("rubric");
+      setSourceFileId(null);
+      setEnvironmentKeys([]);
+      setAnalysisTemplateKey("linux");
+      setSelectedTemplateKey("linux");
+      setPendingReviewIds(new Set());
+      setPendingProposal(null);
+      setSelectedProposalIds(new Set());
+      setPendingProposalMeta(null);
+      setPendingProposalIsRefine(false);
+    }
+
+    if (!judgeSession?.selected_file_id) {
+      clearSelectedSourceState();
+      return;
+    }
+    // Keep the current view while the initial file list request is pending.
+    if (!filesLoaded) return;
     const file = files.find((item) => item.id === judgeSession.selected_file_id);
-    if (!file?.analysis_json) return;
+    if (!file?.analysis_json) {
+      clearSelectedSourceState();
+      return;
+    }
     if (sourceFileId === file.id && autosaveRef.current?.isPending()) return;
     setAnalysis(file.analysis_json);
     setUploadedFileName(file.original_filename || "rubric");
@@ -1298,7 +1322,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
     setPendingReviewIds(new Set(pendingReviewIdsByFileRef.current.get(file.id) ?? []));
     setAnalysisTemplateKey(file.template_key);
     setSelectedTemplateKey(file.template_key);
-  }, [files, judgeSession?.selected_file_id, sourceFileId]);
+  }, [files, filesLoaded, judgeSession?.selected_file_id, sourceFileId]);
 
   /** 重算統計欄位後套用新的項目清單 */
   function applyItems(base, nextItems) {

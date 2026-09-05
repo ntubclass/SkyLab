@@ -7,6 +7,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from functools import lru_cache
 from inspect import signature
 from typing import Any, Literal, cast
 
@@ -428,6 +429,22 @@ def _gate_attempt_record(
     }
 
 
+@lru_cache(maxsize=2048)
+def _cached_hint_fingerprint(hint_key: str) -> str:
+    """Cache stable sha256 fingerprints for retry signatures.
+
+    Pure memoization: same input string yields the same 16-hex digest as the
+    inline hashlib call it replaces. Bounded LRU, no retry-semantics change.
+    """
+    return hashlib.sha256(hint_key.encode("utf-8")).hexdigest()[:16]
+
+
+@lru_cache(maxsize=2048)
+def _cached_issue_fingerprint(normalized_issue: str) -> str:
+    """Cache stable sha256 fingerprints for retry signatures (see above)."""
+    return hashlib.sha256(normalized_issue.encode("utf-8")).hexdigest()[:16]
+
+
 def _failure_signature(
     *,
     phase: str,
@@ -436,18 +453,16 @@ def _failure_signature(
 ) -> str:
     """Build a stable, non-sensitive key for the repeated-error guard."""
     hint_parts = [
-        hashlib.sha256(
+        _cached_hint_fingerprint(
             ":".join(
                 str(hint.get(key) or "")
                 for key in ("type", "target", "field", "function", "command")
-            ).encode("utf-8")
+            )
         )
-        .hexdigest()[:16]
         for hint in fix_hints
     ]
     issue_parts = [
-        hashlib.sha256(" ".join(str(issue).split()).lower().encode("utf-8"))
-        .hexdigest()[:16]
+        _cached_issue_fingerprint(" ".join(str(issue).split()).lower())
         for issue in issues
     ]
     parts = [
@@ -1168,8 +1183,15 @@ async def create_artifact(
             session, template_key, include_cross_template=True
         )
 
+    # Single model_dump reused for both the artifact rubric snapshot and the
+    # source file analysis_json (previously dumped twice with equal content).
+    # The snapshot takes a shallow top-level copy plus template_key, so
+    # analysis_json never gains template_key. Nested items are shared
+    # read-only: downstream only shallow-copies the top level and serializes
+    # each dict to its own JSON column on commit (no in-place nested mutation).
+    analysis_dump = rubric_analysis.model_dump(mode="json")
     rubric_snapshot = _with_template_command_catalog(
-        _rubric_snapshot(rubric_analysis, template_key),
+        {**analysis_dump, "template_key": template_key},
         template_commands,
     )
     source_file, source_file_snapshot_json = source_file_snapshot(
@@ -1178,7 +1200,7 @@ async def create_artifact(
         file_id=source_file_id,
     )
     if source_file is not None:
-        source_file.analysis_json = rubric_analysis.model_dump(mode="json")
+        source_file.analysis_json = analysis_dump
         source_file.updated_at = _now()
         session.add(source_file)
     (
@@ -1256,10 +1278,16 @@ async def regenerate_artifact(
             session, template_key, include_cross_template=True
         )
 
+    # Reuse a single model_dump for snapshot + source analysis_json when a fresh
+    # analysis is provided (same sharing rationale as create_artifact above).
+    analysis_dump: dict[str, Any] | None = None
+    if rubric_analysis is not None:
+        analysis_dump = rubric_analysis.model_dump(mode="json")
+        rubric_base: dict[str, Any] = {**analysis_dump, "template_key": template_key}
+    else:
+        rubric_base = artifact.rubric_snapshot_json
     rubric_snapshot = _with_template_command_catalog(
-        _rubric_snapshot(rubric_analysis, template_key)
-        if rubric_analysis is not None
-        else artifact.rubric_snapshot_json,
+        rubric_base,
         template_commands,
     )
     source_file_id = artifact.source_file_id
@@ -1271,7 +1299,7 @@ async def regenerate_artifact(
             file_id=source_file_id,
         )
         if source_file is not None:
-            source_file.analysis_json = rubric_analysis.model_dump(mode="json")
+            source_file.analysis_json = cast("dict[str, Any]", analysis_dump)
             source_file.updated_at = _now()
             session.add(source_file)
     generation_snapshot = dict(rubric_snapshot)
