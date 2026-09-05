@@ -2579,7 +2579,7 @@ function ExecutionTab({ classId, sessionId, readOnly = false, members }) {
               </select>
               {approvedScripts.length === 0 && (
                 <span className={styles.fileMeta}>
-          目前沒有已核准的檢查腳本，請先到檢查腳本分頁核准。
+          目前沒有已核准的檢查腳本，請先到腳本總覽分頁核准。
                 </span>
               )}
             </label>
