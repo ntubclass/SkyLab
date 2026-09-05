@@ -157,7 +157,7 @@ describe("RubricTable", () => {
     expect(html).not.toContain("AI 偵測判斷（僅由 AI 更新）");
   });
 
-  test("只在異動的評分項目列標示待更新", () => {
+  test("只在異動的檢查項目列標示待更新", () => {
     const html = renderToStaticMarkup(
       <RubricTable
         items={items}

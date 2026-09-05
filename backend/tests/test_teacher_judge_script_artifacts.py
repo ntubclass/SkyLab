@@ -287,13 +287,13 @@ async def test_build_reviewed_script_retries_with_quality_feedback(
         lambda script_content: {
             "approved": script_content != "bad-script",
             "blocked": script_content == "bad-script",
-            "issues": ["不能用 stdout/stderr truthiness 直接判定 pass"]
+            "issues": ["工具缺失時應回傳 unknown，不可使用 warning"]
             if script_content == "bad-script"
             else [],
             "fix_hints": [
                 {
-                    "type": "remove_stdout_truthiness_check",
-                    "description": "不能用 stdout/stderr truthiness 直接判定 pass",
+                    "type": "fix_status_semantics",
+                    "description": "工具缺失時應回傳 unknown，不可使用 warning",
                 }
             ]
             if script_content == "bad-script"
@@ -326,7 +326,7 @@ async def test_build_reviewed_script_retries_with_quality_feedback(
     assert policy_check["quality_approved"] is True
     assert len(policy_check["review_attempts"]) == 1
     assert policy_check["review_attempts"][0]["quality_issues"] == [
-        "不能用 stdout/stderr truthiness 直接判定 pass"
+        "工具缺失時應回傳 unknown，不可使用 warning"
     ]
     assert ai_review["approved"] is True
     assert len(seen_snapshots) == 1

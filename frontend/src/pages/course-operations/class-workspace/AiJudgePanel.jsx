@@ -176,7 +176,7 @@ function comparableItem(item) {
   });
 }
 
-/** 只比較會影響自動檢測支援判斷的評分項目內容。 */
+/** 只比較會影響自動檢測支援判斷的檢查項目內容。 */
 export function getRubricItemsValue(analysis) {
   const items = Array.isArray(analysis?.items) ? analysis.items : [];
   return JSON.stringify(items.map((item) => ({
@@ -185,7 +185,7 @@ export function getRubricItemsValue(analysis) {
   })));
 }
 
-/** 只標記與最後儲存內容不同的評分項目；整表旗標不會外溢到其他列。 */
+/** 只標記與最後儲存內容不同的檢查項目；整表旗標不會外溢到其他列。 */
 export function getPendingRubricItemIds(
   currentItems,
   lastSavedItems,
@@ -263,7 +263,7 @@ function ProposalPanel({ proposal, selectedIds, onToggle, onApply, onSkip, disab
               />
               <span>
                 <b>{item.title || "未命名項目"}</b>
-                <small><em>{proposalOperationLabel(item)}</em>{item.description || "AI 建議新增或調整此評估項目"}</small>
+                <small><em>{proposalOperationLabel(item)}</em>{item.description || "AI 建議新增或調整此檢查項目"}</small>
               </span>
             </label>
           );
@@ -277,7 +277,7 @@ function ProposalPanel({ proposal, selectedIds, onToggle, onApply, onSkip, disab
   );
 }
 
-/* ── 可編輯評分項目表格 ───────────────────────────────── */
+/* ── 可編輯檢查項目表格 ───────────────────────────────── */
 
 function DetectabilityBadge({ detectable, needsReview = false }) {
   const detectableInfo = getDetectableInfo(detectable);
@@ -766,7 +766,7 @@ export function ChatPanel({
         <p className={styles.chatHint}>
           {hasRubric
             ? "提示：詢問問題不會修改評估表，需明確指令（如「幫我改」「新增」）才會執行變更"
-            : "提示：先用＋上傳文件；分析完成後，AI 才會提出可套用的評分項目修改"}
+            : "提示：先用＋上傳文件；分析完成後，AI 才會提出可套用的檢查項目修改"}
         </p>
       </div>
     </div>
@@ -955,7 +955,7 @@ function CreateCheckForm({
         <div>
           {embedded && <button type="button" className={styles.inlineBackButton} disabled={creating || uploading} onClick={onClose}><MIcon name="arrow_back" size={17} />返回建立方式</button>}
           <h2 id="create-check-title">{mode === "blank" ? "從零開始建立" : mode === "existing" ? "使用已有評分文件" : "新增檢查"}</h2>
-          <p>{mode === "blank" ? "建立空白評分表後，會留在 AI 檢查主頁編輯評分項目與 AI 提案。" : mode === "existing" ? "選擇已保存的評分表，或上傳文件交由 AI 分析；完成後會回到 AI 檢查主頁。" : "選擇建立方式後開始準備評分表。"}</p>
+          <p>{mode === "blank" ? "建立空白評分表後，會留在 AI 檢查主頁編輯檢查項目與 AI 提案。" : mode === "existing" ? "選擇已保存的評分表，或上傳文件交由 AI 分析；完成後會回到 AI 檢查主頁。" : "選擇建立方式後開始準備評分表。"}</p>
         </div>
         {!embedded && <button type="button" className={styles.iconBtn} aria-label="關閉" disabled={creating || uploading} onClick={onClose}><MIcon name="close" size={18} /></button>}
       </div>
@@ -1039,7 +1039,7 @@ export function CreateCheckChooser({ onChoose, onCancel, busy = false, error = "
       <div className={styles.createChoiceGrid}>
         <button type="button" className={styles.createChoice} disabled={busy} onClick={() => onChoose("blank")}>
           <span className={styles.createChoiceIcon}><MIcon name="edit_note" size={30} /></span>
-          <span className={styles.createChoiceCopy}><strong>從零開始建立</strong><small>立即開啟空白評分表，在同一頁填寫名稱、模板與評估項目，也可以請 AI 產生初稿。</small></span>
+          <span className={styles.createChoiceCopy}><strong>從零開始建立</strong><small>立即開啟空白評分表，在同一頁填寫名稱、模板與檢查項目，也可以請 AI 產生初稿。</small></span>
           <span className={styles.createChoiceAction}>{busy ? "正在開啟空白頁面…" : "開始設計"}<MIcon name={busy ? "sync" : "arrow_forward"} size={18} /></span>
         </button>
         <button type="button" className={styles.createChoice} disabled={busy} onClick={() => onChoose("existing")}>
@@ -1411,7 +1411,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
         uploadedFile,
         ...current.filter((item) => item.id !== uploadedFile.id),
       ]);
-      toast.success(`分析完成：${response.analysis.items.length} 題評估項目`);
+      toast.success(`分析完成：${response.analysis.items.length} 題檢查項目`);
       fetchFiles();
       return true;
     } catch (err) {
@@ -1496,7 +1496,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
         setPendingProposalMeta(proposal.length ? { baseRevision: response.base_revision ?? analysisRevisionsRef.current.get(sourceFileId) } : null);
         setPendingProposalIsRefine(Boolean(proposal.length && isRefine));
         if (isRefine && !Array.isArray(response.rubric_proposal)) {
-          toast.error("AI 未回傳完整評分項目列表，潤飾尚未套用，請稍後再試");
+          toast.error("AI 未回傳完整檢查項目列表，潤飾尚未套用，請稍後再試");
         } else if (isRefine && !proposal.length && analysis) {
           const saved = await applyAnalysis(applyItems(analysis, analysis.items ?? []), {
             persist: true,
@@ -1530,7 +1530,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
         setPendingReviewIds(new Set());
         toast.success(isRefine ? "潤飾完成，評分表已更新。" : "評估表已更新");
       } else if (isRefine) {
-        toast.error("AI 未回傳完整評分項目列表，潤飾尚未套用，請稍後再試");
+        toast.error("AI 未回傳完整檢查項目列表，潤飾尚未套用，請稍後再試");
       }
     } catch (err) {
       toast.error(err?.message ?? "對話失敗");
@@ -1589,7 +1589,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
     setSelectedProposalIds(new Set());
     setPendingProposalMeta(null);
     setPendingProposalIsRefine(false);
-    toast.success("已套用 AI 提出的評分項目修改");
+    toast.success("已套用 AI 提出的檢查項目修改");
   }
 
   function handleItemChange(index, updatedItem) {
@@ -1614,7 +1614,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
   function handleAddItem() {
     const newItem = {
       id: `item-${Date.now()}`,
-      title: "新評估項目",
+      title: "新檢查項目",
       description: "",
       checked: false,
       detectable: "manual",
@@ -1712,7 +1712,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
             className={styles.btnPrimary}
             onClick={handleCreateScript}
             disabled={isCreatingScript || isChatting || readOnly || items.length === 0}
-            title={items.length === 0 ? "請先新增至少一個評估項目" : undefined}
+            title={items.length === 0 ? "請先新增至少一個檢查項目" : undefined}
           >
             {isCreatingScript ? <Spinner /> : <MIcon name="auto_fix_high" size={16} />}
             {isCreatingScript ? "製作中..." : "製作檢查腳本"}
@@ -1726,15 +1726,15 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
              <strong>正在生成受管檢查腳本</strong>
           </p>
           <p>
-            AI 正在依目前評分項目產生收集腳本，完成後系統會接著進行安全規則檢查與 AI 複核。
+            AI 正在依目前檢查項目產生收集腳本，完成後系統會接著進行安全規則檢查與 AI 複核。
           </p>
         </div>
       )}
 
       {analysis && items.length === 0 && (
         <div className={styles.noticeInfo}>
-          <p><strong>尚未新增評估項目</strong></p>
-          <p>請先新增至少一個評估項目，才能製作檢查腳本。</p>
+          <p><strong>尚未新增檢查項目</strong></p>
+          <p>請先新增至少一個檢查項目，才能製作檢查腳本。</p>
         </div>
       )}
 
@@ -1744,7 +1744,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
             <>
               <div className={`${styles.card} ${styles.rubricTableCard}`}>
                 <div className={styles.cardHead}>
-                  <h4 className={styles.cardTitle}>評估項目（{items.length}）</h4>
+                  <h4 className={styles.cardTitle}>檢查項目（{items.length}）</h4>
                   <button
                     type="button"
                     className={styles.btnSecondary}
@@ -1863,7 +1863,7 @@ function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCreated }
   );
 }
 
-/* ── Tab 2：檢查腳本 ────────────────────────────────────── */
+/* ── Tab 3：腳本總覽 ────────────────────────────────────── */
 
 const SCRIPT_STATUS_LABELS = {
   draft: "草稿",
@@ -2112,7 +2112,7 @@ function ScriptsTab({ classId, sessionId, readOnly = false, onScriptApproved }) 
   );
 }
 
-/* ── Tab 3：執行與結果 ──────────────────────────────────── */
+/* ── Tab 2：執行結果 ────────────────────────────────────── */
 
 const REASON_LABELS = {
   success: "成功",
@@ -2485,7 +2485,7 @@ function ExecutionTab({ classId, sessionId, readOnly = false, members }) {
                             {(result.ai_judgement?.item_judgements ?? []).map((item, index) => (
                               <div key={`${item.item_id ?? "item"}-${index}`} className={styles.judgeItem}>
                                 <div className={styles.judgeItemHead}>
-                                  <span>{item.title ?? item.item_id ?? "評分項目"}</span>
+                                  <span>{item.title ?? item.item_id ?? "檢查項目"}</span>
                                   {typeof item.score === "number" && (
                                     <span className={`${styles.badge} ${styles.badge_muted}`}>
                                       {item.score}/{item.max_score ?? 1}
@@ -2630,9 +2630,9 @@ function ExecutionTab({ classId, sessionId, readOnly = false, members }) {
 /* ── 導師工作區 ─────────────────────────────────────────── */
 
 const TEACHER_JUDGE_TABS = [
-  { key: "rubrics", label: "評分設定", icon: "description" },
-  { key: "scripts", label: "檢查腳本", icon: "terminal" },
-  { key: "execution", label: "執行與結果", icon: "play_circle_outline" },
+  { key: "rubrics", label: "檢查設定", icon: "description" },
+  { key: "execution", label: "執行結果", icon: "play_circle_outline" },
+  { key: "scripts", label: "腳本總覽", icon: "terminal" },
 ];
 
 function TeacherWorkspacePanel({ classId, members, weeks = [] }) {

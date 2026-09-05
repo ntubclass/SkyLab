@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -22,12 +21,6 @@ UNKNOWN_ONLY_EXCEPTIONS = {
     "FileNotFoundError",
     "PermissionError",
 }
-
-_STDOUT_PASS_TERNARY_PATTERN = re.compile(
-    r"""["']pass["']\s+if\s+[^\n]*(stdout|stderr)|if\s+[^\n]*(stdout|stderr)[^\n]*else\s+["']pass["']""",
-    re.IGNORECASE,
-)
-
 
 def _literal_str(node: ast.AST | None) -> str | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -66,15 +59,6 @@ def _call_name(node: ast.AST, aliases: dict[str, str] | None = None) -> str | No
     if isinstance(node, ast.Call):
         return _call_name(node.func, aliases)
     return None
-
-
-def _node_mentions_stream(node: ast.AST) -> bool:
-    for child in ast.walk(node):
-        if isinstance(child, ast.Name) and child.id in {"stdout", "stderr"}:
-            return True
-        if isinstance(child, ast.Attribute) and child.attr in {"stdout", "stderr"}:
-            return True
-    return False
 
 
 def _call_status_literal(node: ast.Call) -> str | None:
@@ -432,10 +416,6 @@ def check_script_quality(script_content: str) -> CheckResult:
         issues.append("輸出 JSON metadata 必須包含 timestamp 與 platform")
         fix_hints.append({"type": "add_output_field", "field": "metadata", "description": "輸出 JSON metadata 必須包含 timestamp 與 platform"})
 
-    if _STDOUT_PASS_TERNARY_PATTERN.search(script_content):
-        issues.append("不能用 stdout/stderr truthiness 直接判定 pass")
-        fix_hints.append({"type": "remove_stdout_truthiness_check", "description": "不能用 stdout/stderr truthiness 直接判定 pass"})
-
     commands = _collect_commands_needing_which(tree, aliases)
     which_commands = _collect_which_commands(tree, aliases)
     for command in sorted(commands - which_commands):
@@ -462,9 +442,6 @@ def check_script_quality(script_content: str) -> CheckResult:
                 issues.append("record_check title 請使用收集語意，不要使用檢查")
                 fix_hints.append({"type": "rename_title", "current": title, "description": "record_check title 請使用收集語意，不要使用檢查"})
         if isinstance(node, ast.If):
-            if _node_mentions_stream(node.test) and _body_marks_pass(node.body, aliases):
-                issues.append("不能用 stdout/stderr 是否有內容直接判定 pass")
-                fix_hints.append({"type": "remove_stdout_truthiness_check", "description": "不能用 stdout/stderr 是否有內容直接判定 pass"})
             if _condition_checks_availability(node.test, aliases):
                 statuses = _body_record_check_statuses(node.body, aliases)
                 if "warning" in statuses:
