@@ -2019,7 +2019,6 @@ function ScriptsTab({
   const [renameInvalid, setRenameInvalid] = useState(false);
   const [actionPending, setActionPending] = useState(null);
   const deleteScriptDialog = useDialogPresence(deleteTarget); // "approve" | "delete"
-  const renameScriptDialog = useDialogPresence(renameTarget);
   const renameInputRef = useRef(null);
 
   const fetchScripts = useCallback(async () => {
@@ -2042,10 +2041,27 @@ function ScriptsTab({
     if (initialSelectedId) setSelectedId(initialSelectedId);
   }, [initialSelectedId]);
 
+  useEffect(() => {
+    if (!renameTarget || !renameInputRef.current) return;
+    renameInputRef.current.focus();
+    renameInputRef.current.select();
+  }, [renameTarget]);
+
   const selected = useMemo(() => {
     if (scripts.length === 0) return null;
     return scripts.find((script) => script.id === selectedId) ?? scripts[0];
   }, [scripts, selectedId]);
+  const selectedIsRenaming = Boolean(selected && renameTarget?.id === selected.id);
+
+  function selectScript(scriptId) {
+    if (actionPending !== null) return;
+    if (renameTarget && renameTarget.id !== scriptId) {
+      setRenameTarget(null);
+      setRenameName("");
+      setRenameInvalid(false);
+    }
+    setSelectedId(scriptId);
+  }
 
   async function handleApprove() {
     setActionPending("approve");
@@ -2077,14 +2093,14 @@ function ScriptsTab({
     }
   }
 
-  function openRenameDialog(script) {
+  function openRename(script) {
     if (!script || actionPending !== null) return;
     setRenameTarget(script);
     setRenameName(script.name ?? "");
     setRenameInvalid(false);
   }
 
-  function closeRenameDialog() {
+  function cancelRename() {
     if (actionPending === "rename") return;
     setRenameTarget(null);
     setRenameName("");
@@ -2094,19 +2110,20 @@ function ScriptsTab({
   async function handleRename(event) {
     event?.preventDefault?.();
     const nextName = renameName.trim();
-    if (!renameTarget) return;
+    const target = renameTarget;
+    if (!target || actionPending === "rename") return;
     if (!nextName) {
       setRenameInvalid(true);
       focusInvalidField(renameInputRef.current);
       return;
     }
-    if (nextName === String(renameTarget.name ?? "").trim()) {
-      closeRenameDialog();
+    if (nextName === String(target.name ?? "").trim()) {
+      cancelRename();
       return;
     }
     setActionPending("rename");
     try {
-      const updated = await AiJudgeService.renameScript(classId, renameTarget.id, nextName);
+      const updated = await AiJudgeService.renameScript(classId, target.id, nextName);
       toast.success("檢查腳本已重新命名");
       setScripts((current) =>
         current.map((script) => (script.id === updated.id ? updated : script)),
@@ -2148,7 +2165,8 @@ function ScriptsTab({
                 key={script.id}
                 type="button"
                 className={`${styles.scriptItem} ${selected?.id === script.id ? styles.scriptItemActive : ""}`}
-                onClick={() => setSelectedId(script.id)}
+                onClick={() => selectScript(script.id)}
+                disabled={actionPending !== null}
               >
                 <span className={styles.scriptItemHead}>
                   <span className={styles.scriptName}>{script.name}</span>
@@ -2157,7 +2175,7 @@ function ScriptsTab({
                   </span>
                 </span>
                 <span className={styles.fileMeta}>
-                  v{script.version} · {getTemplateLabel(script.template_key)} · {formatDateTime(script.updated_at)}
+                  {getTemplateLabel(script.template_key)} · {formatDateTime(script.updated_at)}
                 </span>
               </button>
             ))}
@@ -2166,17 +2184,67 @@ function ScriptsTab({
           {selected && (
             <div className={styles.card}>
               <div className={styles.cardHead}>
-                <h4 className={styles.cardTitle}>
-                  <MIcon name="security" size={18} />
-                  {selected.name} v{selected.version}
-                </h4>
+                {selectedIsRenaming ? (
+                  <form
+                    className={styles.scriptRenameForm}
+                    aria-label={`重新命名「${selected.name}」`}
+                    onSubmit={handleRename}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <MIcon name="security" size={18} />
+                    <label className={styles.srOnly} htmlFor={`script-name-${selected.id}`}>
+                      腳本名稱
+                    </label>
+                    <input
+                      id={`script-name-${selected.id}`}
+                      ref={renameInputRef}
+                      className={`${styles.scriptRenameInput} ${renameInvalid ? styles.fieldInvalid : ""}`}
+                      // eslint-disable-next-line jsx-a11y/no-autofocus
+                      autoFocus
+                      type="text"
+                      value={renameName}
+                      maxLength={255}
+                      disabled={actionPending === "rename"}
+                      aria-label={`重新命名「${selected.name}」`}
+                      aria-invalid={renameInvalid}
+                      aria-describedby={renameInvalid ? `script-name-error-${selected.id}` : undefined}
+                      title="按 Enter 儲存，Esc 取消"
+                      onChange={(event) => {
+                        setRenameName(event.target.value);
+                        setRenameInvalid(false);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.isComposing) return;
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          event.currentTarget.form?.requestSubmit();
+                          return;
+                        }
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          cancelRename();
+                        }
+                      }}
+                    />
+                    {renameInvalid && (
+                      <span id={`script-name-error-${selected.id}`} className={styles.scriptRenameError} role="alert">
+                        請輸入腳本名稱。
+                      </span>
+                    )}
+                  </form>
+                ) : (
+                  <h4 className={styles.cardTitle}>
+                    <MIcon name="security" size={18} />
+                    {selected.name}
+                  </h4>
+                )}
                 <div className={styles.sectionActions}>
                   {selected.status === "reviewed" && (
                     <button
                       type="button"
                       className={styles.btnPrimary}
                       onClick={handleApprove}
-                      disabled={actionPending !== null}
+                      disabled={actionPending !== null || selectedIsRenaming}
                     >
                       <MIcon name="check_circle" size={16} />
                       {actionPending === "approve" ? "核准中..." : "核准"}
@@ -2185,17 +2253,21 @@ function ScriptsTab({
                   <button
                     type="button"
                     className={styles.btnSecondary}
-                    onClick={() => openRenameDialog(selected)}
+                    onClick={() => (selectedIsRenaming ? cancelRename() : openRename(selected))}
                     disabled={actionPending !== null}
                   >
-                    <MIcon name="edit" size={16} />
-                    重新命名
+                    {actionPending === "rename" ? (
+                      <Spinner size={16} />
+                    ) : (
+                      <MIcon name={selectedIsRenaming ? "close" : "edit"} size={16} />
+                    )}
+                    {actionPending === "rename" ? "儲存中..." : selectedIsRenaming ? "取消" : "重新命名"}
                   </button>
                   <button
                     type="button"
                     className={styles.btnSecondary}
                     onClick={() => setDeleteTarget(selected)}
-                    disabled={actionPending !== null}
+                    disabled={actionPending !== null || selectedIsRenaming}
                   >
                     <MIcon name="delete" size={16} />
                     刪除腳本
@@ -2219,7 +2291,7 @@ function ScriptsTab({
       {deleteScriptDialog.open && (
         <ConfirmModal
           title="確認刪除檢查腳本？"
-          description={`你即將永久刪除「${deleteScriptDialog.item.name}」v${deleteScriptDialog.item.version}。刪除後無法再查看或核准。`}
+          description={`你即將永久刪除「${deleteScriptDialog.item.name}」。刪除後無法再查看或核准。`}
           closing={deleteScriptDialog.closing}
           onClose={() => {
             if (actionPending !== "delete") setDeleteTarget(null);
@@ -2247,72 +2319,6 @@ function ScriptsTab({
         />
       )}
 
-      {renameScriptDialog.open && (
-        <div
-          className={`${styles.modalOverlay} ${renameScriptDialog.closing ? styles.modalOverlayOut : ""}`}
-          onMouseDown={closeRenameDialog}
-        >
-          <div
-            className={styles.confirm}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="rename-script-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <h2 id="rename-script-title">重新命名檢查腳本</h2>
-            <p>
-              {`正在重新命名「${renameScriptDialog.item.name}」v${renameScriptDialog.item.version}。名稱僅供老師辨識，不影響已產生的執行結果。`}
-            </p>
-            <form onSubmit={handleRename}>
-              <label className={styles.dialogField}>
-                腳本名稱
-                <input
-                  ref={renameInputRef}
-                  className={renameInvalid ? styles.fieldInvalid : undefined}
-                  // eslint-disable-next-line jsx-a11y/no-autofocus
-                  autoFocus
-                  value={renameName}
-                  maxLength={255}
-                  placeholder="例如：期中 Python 收集腳本"
-                  aria-label={`重新命名「${renameScriptDialog.item.name}」`}
-                  onChange={(event) => {
-                    setRenameName(event.target.value);
-                    setRenameInvalid(false);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      closeRenameDialog();
-                    }
-                  }}
-                />
-              </label>
-              {renameInvalid && (
-                <p className={styles.dangerText} role="alert">
-                  請輸入腳本名稱。
-                </p>
-              )}
-              <div className={styles.modalActions}>
-                <button
-                  type="button"
-                  className={styles.btnSecondary}
-                  disabled={actionPending === "rename"}
-                  onClick={closeRenameDialog}
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className={styles.btnPrimary}
-                  disabled={actionPending === "rename"}
-                >
-                  {actionPending === "rename" ? "儲存中..." : "確認重新命名"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -2776,7 +2782,7 @@ function ExecutionTab({ classId, sessionId, members }) {
               >
                 {approvedScripts.map((script) => (
                   <option key={script.id} value={script.id}>
-                    {script.name} v{script.version}
+                    {script.name}
                   </option>
                 ))}
               </select>
@@ -2800,7 +2806,7 @@ function ExecutionTab({ classId, sessionId, members }) {
 
             {effectiveScript && (
               <p className={styles.fileMeta}>
-                即將使用：{effectiveScript.name} v{effectiveScript.version}（
+                即將使用：{effectiveScript.name}（
                 {getTemplateLabel(effectiveScript.template_key)}）
               </p>
             )}
