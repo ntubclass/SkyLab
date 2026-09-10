@@ -51,15 +51,11 @@ from .ip_allocation import IpAllocation
 from .ldap_config import LdapConfig
 from .mining_incident import MiningIncident, MiningIncidentStatus
 from .nat_rule import NatRule
-from .proxmox_config import (
-    ProxmoxConfig,
-    ProxmoxConnectionConfig,
-    ProxmoxPlacementConfig,
-    ProxmoxSchedulerConfig,
-)
+from .proxmox_config import ProxmoxConfig
 from .proxmox_connection import ProxmoxConnection
 from .proxmox_node import ProxmoxNode
 from .proxmox_storage import ProxmoxStorage
+from .push_subscription import PushSubscription, WebPushConfig
 from .quick_practice import QuickPracticeSession, QuickPracticeSessionMachine
 from .quota_config import QuotaConfig
 from .resource import Resource
@@ -110,14 +106,7 @@ from .teaching_class import (
 )
 from .tunnel_proxy import TunnelProxy
 from .user import User, UserBase, UserRole
-from .vm_request import (
-    VMProvisioningStatus,
-    VMRequest,
-    VMRequestProvisioningState,
-    VMRequestReviewState,
-    VMRequestScheduleState,
-    VMRequestStatus,
-)
+from .vm_request import VMProvisioningStatus, VMRequest, VMRequestStatus
 from .vm_template import (
     TemplateAttachment,
     VMTemplate,
@@ -151,9 +140,6 @@ __all__ = [
     "VMProvisioningStatus",
     "VMRequest",
     "VMRequestStatus",
-    "VMRequestProvisioningState",
-    "VMRequestReviewState",
-    "VMRequestScheduleState",
     # Audit Log
     "AuditAction",
     "AuditLog",
@@ -166,6 +152,9 @@ __all__ = [
     "MiningIncidentStatus",
     # LDAP
     "LdapConfig",
+    # Web Push
+    "PushSubscription",
+    "WebPushConfig",
     # Spec Change Request
     "SpecChangeRequest",
     "SpecChangeRequestStatus",
@@ -173,9 +162,6 @@ __all__ = [
     # Proxmox Config
     "ProxmoxConfig",
     "ProxmoxConnection",
-    "ProxmoxConnectionConfig",
-    "ProxmoxPlacementConfig",
-    "ProxmoxSchedulerConfig",
     # Proxmox Nodes
     "ProxmoxNode",
     # Proxmox Storages

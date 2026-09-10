@@ -8,6 +8,7 @@ duplicate the same cluster.resources iteration or qemu/lxc dispatch logic.
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import httpx
@@ -29,6 +30,16 @@ from app.infrastructure.proxmox import (
 logger = logging.getLogger(__name__)
 
 ResourceType = Literal["qemu", "lxc"]
+
+
+@dataclass(frozen=True)
+class MonitoringSnapshot:
+    """同一輪監控取樣的節點、資源與連線完成度。"""
+
+    nodes: list[dict[str, Any]]
+    resources: list[dict[str, Any]]
+    failed_connections: int
+    total_connections: int
 
 
 def _connection_keys() -> list[int | None]:
@@ -138,6 +149,50 @@ def list_nodes() -> list[dict]:
     if errors and not results and len(errors) == len(keys):
         raise ProxmoxError(f"All Proxmox connections are unavailable. {errors[0]}")
     return results
+
+
+def collect_monitoring_snapshot() -> MonitoringSnapshot:
+    """以每個連線一次取回 nodes/resources，供監控讀模型使用。
+
+    ``list_nodes`` 與 ``list_all_resources`` 各自查詢時，可能在兩次呼叫間
+    得到不同的連線可用性；監控需要知道這一輪是否只拿到部分叢集資料，
+    因此在同一個 connection client 上完成兩項取樣並保留失敗數。
+    """
+    nodes: list[dict[str, Any]] = []
+    resources: list[dict[str, Any]] = []
+    failures: list[str] = []
+    keys = _connection_keys()
+
+    for key in keys:
+        try:
+            proxmox = get_proxmox_api(key)
+            nodes.extend(proxmox.nodes.get())
+            raw_resources = list(proxmox.cluster.resources.get(type="vm"))
+            pool_name = get_proxmox_settings(key).pool_name
+            resources.extend(
+                resource
+                for resource in raw_resources
+                if resource.get("pool") == pool_name
+            )
+        except Exception as exc:
+            failures.append(str(exc))
+            logger.warning(
+                "Failed to collect monitoring snapshot for Proxmox connection %s: %s",
+                key,
+                exc,
+            )
+
+    if failures and not nodes and not resources and len(failures) == len(keys):
+        raise ProxmoxError(
+            f"All Proxmox connections are unavailable. {failures[0]}"
+        )
+
+    return MonitoringSnapshot(
+        nodes=nodes,
+        resources=resources,
+        failed_connections=len(failures),
+        total_connections=len(keys),
+    )
 
 
 def _admin_disabled_node_names() -> set[str]:
@@ -358,6 +413,39 @@ def list_iso_images(node: str) -> list[dict]:
 # Control (start / stop / reboot / shutdown / reset)
 # ---------------------------------------------------------------------------
 
+# 電源動作 → 該資源「應該」處於的開機狀態；onboot 跟著它走，不開放使用者自行設定：
+# 主機重開後只把本來就該開著的機器拉起來，關掉／暫停的機器不會偷偷復活。
+_ONBOOT_BY_ACTION: dict[str, int] = {
+    "start": 1,
+    "resume": 1,
+    "reboot": 1,
+    "reset": 1,
+    "stop": 0,
+    "shutdown": 0,
+    "suspend": 0,
+}
+
+
+def sync_onboot(
+    node: str, vmid: int, resource_type: ResourceType, action: str
+) -> None:
+    """依電源動作把 guest config 的 ``onboot`` 對齊到應有狀態（best-effort）。
+
+    寫入失敗（例如 guest 被 backup/snapshot 鎖住）只記 warning，不能讓
+    已成功送出的電源動作跟著報錯；下一次開關機會再對齊一次。
+    """
+    onboot = _ONBOOT_BY_ACTION.get(action)
+    if onboot is None:
+        return
+    try:
+        update_config(node, vmid, resource_type, onboot=onboot)
+    except Exception as exc:
+        logger.warning(
+            "Failed to sync onboot=%s for %s %s on %s after %s: %s",
+            onboot, resource_type, vmid, node, action, exc,
+        )
+
+
 def control(
     node: str,
     vmid: int,
@@ -371,12 +459,16 @@ def control(
     ``wait_timeout_seconds`` 有值時阻塞等待 PVE 任務結束：任務失敗拋
     ``ProxmoxError``（訊息含 task log tail，可辨識 vGPU 開機失敗等原因），
     逾時拋 ``TimeoutError``（任務在 PVE 端照跑）。預設 fire-and-forget。
+
+    電源動作送出成功後會順手把 ``onboot`` 對齊（start/resume/reboot/reset → 1，
+    stop/shutdown/suspend → 0），見 :func:`sync_onboot`。
     """
     upid = getattr(_resource_api(node, vmid, resource_type).status, action).post()
     if wait_timeout_seconds is not None and upid:
         basic_blocking_task_status(
             node, str(upid), timeout_seconds=wait_timeout_seconds
         )
+    sync_onboot(node, vmid, resource_type, action)
 
 
 def get_status(node: str, vmid: int, resource_type: ResourceType) -> dict:
