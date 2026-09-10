@@ -1371,6 +1371,15 @@
   min-width: 0;
 }
 
+.sessionWeekLabel {
+  width: 100%;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sessionRow:hover { background: var(--color-hover); }
 
 .sessionRowActions {
@@ -1605,8 +1614,8 @@
 .createChoiceCopy small { max-width: 36ch; color: var(--color-text-secondary); font-size: $font-size-14; line-height: 1.6; }
 .createChoiceAction { display: inline-flex; align-items: center; gap: 6px; color: var(--color-primary-on-surface); font-size: $font-size-14; font-weight: $font-weight-700; }
 .dialogField { display: flex; flex-direction: column; gap: 6px; color: var(--color-text-secondary); font-size: $font-size-12; font-weight: $font-weight-500; }
-.dialogField input { min-height: 38px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: $radius-8; color: var(--color-text-primary); background: var(--color-surface); font: inherit; font-size: $font-size-14; outline: none; }
-.dialogField input:focus { border-color: var(--color-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 12%, transparent); }
+.dialogField input, .dialogField select { min-height: 38px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: $radius-8; color: var(--color-text-primary); background: var(--color-surface); font: inherit; font-size: $font-size-14; outline: none; }
+.dialogField input:focus, .dialogField select:focus { border-color: var(--color-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 12%, transparent); }
 .modeFieldset { margin: 0; padding: 0; border: 0; }.modeFieldset legend { margin-bottom: 8px; color: var(--color-text-secondary); font-size: $font-size-12; font-weight: $font-weight-500; }
 .modeChoices { display: grid; gap: $spacing-8; }.modeChoice, .modeChoiceActive { display: flex; gap: 9px; padding: 11px; border: 1px solid var(--color-border); border-radius: $radius-8; cursor: pointer; }.modeChoiceActive { border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 7%, transparent); }.modeChoice input, .modeChoiceActive input { margin-top: 3px; accent-color: var(--color-primary); }.modeChoice span, .modeChoiceActive span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }.modeChoice b, .modeChoiceActive b { font-size: $font-size-14; }.modeChoice small, .modeChoiceActive small { color: var(--color-text-muted); font-size: $font-size-12; line-height: 1.4; }
 .modeFields { display: flex; flex-direction: column; gap: $spacing-16; }

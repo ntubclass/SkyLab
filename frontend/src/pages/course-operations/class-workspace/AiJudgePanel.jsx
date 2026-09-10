@@ -822,9 +822,7 @@ function CreateCheckForm({
 }) {
   const requestVersionRef = useRef(0);
   const availableWeeks = weeks.filter((week) => week.title?.trim());
-  const [selectedWeekId, setSelectedWeekId] = useState(
-    availableWeeks[0]?.id ?? "",
-  );
+  const [selectedWeekId, setSelectedWeekId] = useState("");
   const [mode, setMode] = useState(initialMode);
   const [rubricName, setRubricName] = useState("");
   const [environmentKeys, setEnvironmentKeys] = useState(() => (
@@ -2864,6 +2862,8 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
   const [renameTarget, setRenameTarget] = useState(null);
   const [renameTitle, setRenameTitle] = useState("");
   const [renameInvalid, setRenameInvalid] = useState(false);
+  const [moveWeekTarget, setMoveWeekTarget] = useState(null);
+  const [moveWeekId, setMoveWeekId] = useState("");
   const renameInputRef = useRef(null);
   const requestVersionRef = useRef(0);
   const classIdRef = useRef(classId);
@@ -3061,6 +3061,22 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
     }
   }
 
+  async function moveSessionToWeek(event) {
+    event.preventDefault();
+    const target = moveWeekTarget;
+    if (!target || !moveWeekId || busySessionIds.has(target.id)) return;
+    const updated = await runSessionAction(target, (entry) => (
+      AiJudgeService.updateSession(classId, entry.id, {
+        teaching_class_week_id: moveWeekId,
+      })
+    ));
+    if (updated) {
+      setMoveWeekTarget(null);
+      setMoveWeekId("");
+      toast.success(`已將「${target.title}」移到正確週次。`);
+    }
+  }
+
   async function deleteSession(item) {
     const deleted = await runSessionAction(item, async (entry) => {
       await AiJudgeService.deleteSession(classId, entry.id);
@@ -3098,6 +3114,7 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
         style={{ top: `${menuPos.top}px`, left: `${menuPos.left}px` }}
       >
         <button type="button" role="menuitem" disabled={busy} onClick={() => { setRenameTarget(item); setRenameTitle(item.title); setRenameInvalid(false); closeSessionMenu(); }}><MIcon name="edit" size={16} />重新命名</button>
+        <button type="button" role="menuitem" disabled={busy} onClick={() => { setMoveWeekTarget(item); setMoveWeekId(item.teaching_class_week_id ?? ""); closeSessionMenu(); }}><MIcon name="calendar_month" size={16} />調整週次</button>
         <button type="button" role="menuitem" disabled={busy} onClick={() => pinSession(item)}><MIcon name="push_pin" filled={Boolean(item.pinned_at)} size={16} />{item.pinned_at ? "取消釘選" : "釘選"}</button>
         <button type="button" role="menuitem" disabled={busy} onClick={() => forkSession(item)}><MIcon name="fork_right" size={16} />重構</button>
         <span className={styles.menuSeparator} />
@@ -3113,6 +3130,7 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
         {loading ? <p className={styles.mutedText}>載入中…</p> : sessions.length === 0 ? <div className={styles.sidebarEmpty}><MIcon name="checklist" size={24} /><p>尚未建立檢查。新增時可從零建立評分表，或上傳資料文件，再與 AI 討論並調整。</p></div> : sessions.map((item) => {
           const selected = item.id === activeSessionId;
            const busy = busySessionIds.has(item.id);
+               const linkedWeek = weeks.find((week) => String(week.id) === String(item.teaching_class_week_id));
                const renaming = renameTarget?.id === item.id;
                return (
                  <div key={item.id} className={`${styles.sessionRow} ${selected ? styles.sessionRowActive : ""} ${renaming ? styles.sessionRowRenaming : ""}`} role="listitem">
@@ -3138,6 +3156,7 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
                    ) : (
                      <button type="button" className={selected ? styles.sessionItemActive : styles.sessionItem} aria-current={selected ? "true" : undefined} onClick={() => { setCreationView(null); setActiveSessionId(item.id); closeSessionMenu(); }}>
                        <SessionTitle title={item.title}>{item.title}</SessionTitle>
+                       <small className={styles.sessionWeekLabel}>{linkedWeek ? `第 ${linkedWeek.week ?? linkedWeek.week_number} 週 · ${linkedWeek.title}` : "尚未指定週次"}</small>
                      </button>
                    )}
                    <div className={styles.sessionRowActions}>
@@ -3196,6 +3215,32 @@ function TeacherWorkspacePanel({ classId, members, weeks = [] }) {
       )}
 
       {typeof document !== "undefined" && sessionMenuItemKeep.open && sessionMenuPos.item && createPortal(renderSessionMenu(sessionMenuItemKeep.item), document.body)}
+
+      {typeof document !== "undefined" && moveWeekTarget && createPortal(
+        <div className={styles.modalOverlay} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMoveWeekTarget(null); }}>
+          <form className={styles.modal} onSubmit={moveSessionToWeek}>
+            <div className={styles.modalHeader}>
+              <div>
+                <h2>調整檢查週次</h2>
+                <p>「{moveWeekTarget.title}」只會出現在所選週次，學生端不會再混到其他週。</p>
+              </div>
+              <button type="button" className={styles.iconBtn} aria-label="關閉" onClick={() => setMoveWeekTarget(null)}><MIcon name="close" size={18} /></button>
+            </div>
+            <label className={styles.dialogField}>
+              <span>所屬週任務</span>
+              <select value={moveWeekId} onChange={(event) => setMoveWeekId(event.target.value)} autoFocus>
+                <option value="" disabled>請選擇週任務</option>
+                {weeks.filter((week) => week.title?.trim()).map((week) => <option key={week.id} value={week.id}>第 {week.week ?? week.week_number} 週 · {week.title}</option>)}
+              </select>
+            </label>
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.btnSecondary} onClick={() => setMoveWeekTarget(null)}>取消</button>
+              <button type="submit" className={styles.btnPrimary} disabled={!moveWeekId || busySessionIds.has(moveWeekTarget.id)}>儲存週次</button>
+            </div>
+          </form>
+        </div>,
+        document.body,
+      )}
 
     </div>
   );
