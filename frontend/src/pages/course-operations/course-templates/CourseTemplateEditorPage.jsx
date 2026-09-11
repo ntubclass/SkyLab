@@ -263,16 +263,30 @@ function MachineEditor({ value, edges, publications, onChange, onEdgesChange, on
 
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId);
   const selectedNode = value.find((node) => node.id === selectedNodeId) ?? (!selectedEdge ? value[0] : null);
-  // 來自 PVE 範本的機器沿用範本規格，只有自訂規格可調整。
-  const specLocked = locked || selectedNode?.sourceType !== "custom";
-  // 自訂規格的 VM 其實也是克隆一台 PVE 範本機，磁碟不可小於該範本。
+  // 規格只在草稿可調：已發布版本不可變（班級釘住版本，要改規格得開新版本）。
+  const specLocked = locked;
+  // 規格基準：範本來源以範本自身規格為錨，自訂 VM 以來源映像為錨。
+  const sourceTemplate = selectedNode?.sourceType === "template"
+    ? pveTemplates.find((item) => String(item.id) === String(selectedNode.sourceTemplateId))
+    : null;
   const customVmImage = selectedNode?.sourceType === "custom" && selectedNode?.type !== "lxc"
     ? vmImages.find((item) => item.value === String(selectedNode.customImageRef))
     : null;
-  const vmDiskFloor = Math.max(VM_DISK_RANGE[0], Number(customVmImage?.diskGb) || 0);
-  const diskRange = selectedNode?.type === "lxc"
-    ? LXC_DISK_RANGE
-    : [vmDiskFloor, Math.max(VM_DISK_RANGE[1], vmDiskFloor)];
+  // CPU/RAM 上下皆可調；基準值高於預設上限時把上限撐開，以免拉不回原規格。
+  const baseCpu = Number(sourceTemplate?.default_cores) || 0;
+  const baseMemoryGb = sourceTemplate?.default_memory
+    ? Math.max(1, Math.round(Number(sourceTemplate.default_memory) / 1024))
+    : 0;
+  const cpuRange = [CPU_RANGE[0], Math.max(CPU_RANGE[1], baseCpu)];
+  const memoryRange = [MEMORY_RANGE[0], Math.max(MEMORY_RANGE[1], baseMemoryGb)];
+  // 磁碟只能往上：克隆機天生就是來源大小，PVE resize 不支援縮小。
+  const isLxcNode = selectedNode?.type === "lxc";
+  const diskFloor = Math.max(
+    isLxcNode ? LXC_DISK_RANGE[0] : VM_DISK_RANGE[0],
+    Number(sourceTemplate?.default_disk) || Number(customVmImage?.diskGb) || 0,
+  );
+  const diskCeiling = isLxcNode ? LXC_DISK_RANGE[1] : VM_DISK_RANGE[1];
+  const diskRange = [diskFloor, Math.max(diskCeiling, diskFloor)];
 
   const nodePublications = publications.filter((item) => item.nodeKey === selectedNode?.id);
 
@@ -383,8 +397,8 @@ function MachineEditor({ value, edges, publications, onChange, onEdgesChange, on
               <label>{t("CourseTemplateEditorPage.fieldName")}<input disabled={locked} value={selectedNode.name} onChange={(event) => patchNode(selectedNode.id, { name: event.target.value })} /></label>
               <label>{t("CourseTemplateEditorPage.fieldRole")}<input disabled={locked} value={selectedNode.role} onChange={(event) => patchNode(selectedNode.id, { role: event.target.value })} /></label>
               <div className={styles.inspectorSliders}>
-                <label><span className={styles.sliderLabel}>CPU<em>{t("CourseTemplateEditorPage.cpuValue", { count: selectedNode.cpu })}</em></span><input disabled={specLocked} type="range" step="1" min={Math.min(CPU_RANGE[0], selectedNode.cpu)} max={Math.max(CPU_RANGE[1], selectedNode.cpu)} value={selectedNode.cpu} onChange={(event) => patchNode(selectedNode.id, { cpu: Number(event.target.value) })} /></label>
-                <label><span className={styles.sliderLabel}>RAM<em>{t("CourseTemplateEditorPage.memoryValue", { count: selectedNode.memory })}</em></span><input disabled={specLocked} type="range" step="1" min={Math.min(MEMORY_RANGE[0], selectedNode.memory)} max={Math.max(MEMORY_RANGE[1], selectedNode.memory)} value={selectedNode.memory} onChange={(event) => patchNode(selectedNode.id, { memory: Number(event.target.value) })} /></label>
+                <label><span className={styles.sliderLabel}>CPU<em>{t("CourseTemplateEditorPage.cpuValue", { count: selectedNode.cpu })}</em></span><input disabled={specLocked} type="range" step="1" min={Math.min(cpuRange[0], selectedNode.cpu)} max={Math.max(cpuRange[1], selectedNode.cpu)} value={selectedNode.cpu} onChange={(event) => patchNode(selectedNode.id, { cpu: Number(event.target.value) })} /></label>
+                <label><span className={styles.sliderLabel}>RAM<em>{t("CourseTemplateEditorPage.memoryValue", { count: selectedNode.memory })}</em></span><input disabled={specLocked} type="range" step="1" min={Math.min(memoryRange[0], selectedNode.memory)} max={Math.max(memoryRange[1], selectedNode.memory)} value={selectedNode.memory} onChange={(event) => patchNode(selectedNode.id, { memory: Number(event.target.value) })} /></label>
                 <label><span className={styles.sliderLabel}>Disk<em>{t("CourseTemplateEditorPage.diskValue", { count: selectedNode.disk })}</em></span><input disabled={specLocked} type="range" step="1" min={Math.min(diskRange[0], selectedNode.disk)} max={Math.max(diskRange[1], selectedNode.disk)} value={selectedNode.disk} onChange={(event) => patchNode(selectedNode.id, { disk: Number(event.target.value) })} /></label>
               </div>
               <div className={styles.publicationSection}>
