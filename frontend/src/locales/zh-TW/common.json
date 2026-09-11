@@ -133,6 +133,7 @@
   "UserGuide.aiApi.step16.title": "Template 用量是範本功能產生的消耗",
   "UserGuide.aiApi.step16.text": "這裡統計透過 AI Template API 執行的呼叫，與上方直接呼叫分開計算，可用來判斷哪一類功能消耗較多。",
   "Sidebar.topDashboard": "首頁",
+  "Sidebar.topCourses": "課程",
   "Sidebar.groupResource": "資源",
   "Sidebar.itemMyResources": "我的資源",
   "Sidebar.itemMyRequests": "我的申請",

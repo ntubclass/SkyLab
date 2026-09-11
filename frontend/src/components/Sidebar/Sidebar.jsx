@@ -11,6 +11,7 @@ import JobsButton from "../Jobs/JobsButton";
 
 const topItems = [
   { key: "dashboard", labelKey: "Sidebar.topDashboard", icon: "dashboard" },
+  { key: "courses", labelKey: "Sidebar.topCourses", icon: "school", studentOnly: true },
 ];
 
 const navGroups = [
@@ -345,6 +346,7 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
   const { user, logout } = useAuth();
   const isAdmin = Boolean(user?.is_superuser || user?.role === "admin");
   const canTeach = isAdmin || user?.role === "teacher";
+  const visibleTopItems = topItems.filter((item) => !item.studentOnly || !canTeach);
   const visibleNavGroups = navGroups
     .map((group) => ({
       ...group,
@@ -406,7 +408,7 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
 
       {/* ===== Main nav ===== */}
       <nav className={styles.nav}>
-        {topItems.map((item) => (
+        {visibleTopItems.map((item) => (
           <button
             key={item.key}
             type="button"

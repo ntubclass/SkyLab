@@ -99,10 +99,13 @@ function PublicationDialog({ draft, zones, siblings, onChange, onSave, onClose }
   const duplicated = isDomain && siblings.some((item) => (
     item.id !== draft.id && item.mode === "domain" && item.hostnamePrefix === draft.hostnamePrefix
   ));
+  const missingPlaceholder = isDomain && (
+    !draft.hostnamePrefix.includes("{class}") || !draft.hostnamePrefix.includes("{student}")
+  );
   const hostnameValid = !isDomain
-    || (draft.hostnamePrefix.includes("{student}") && Boolean(draft.zoneId) && !duplicated);
+    || (!missingPlaceholder && Boolean(draft.zoneId) && !duplicated);
   const zone = zones.find((item) => item.id === draft.zoneId);
-  const preview = `${String(draft.hostnamePrefix || "").replace("{student}", "alice")}${zone ? `.${zone.name}` : ""}`;
+  const preview = `${String(draft.hostnamePrefix || "").replace("{class}", "linux101-a1b2c3").replace("{student}", "s8f21c4a2")}${zone ? `.${zone.name}` : ""}`;
 
   return <div className={styles.createDialogOverlay} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className={`${styles.createDialog} ${styles.publicationDialog}`} role="dialog" aria-modal="true" aria-labelledby="publication-dialog-title">
@@ -117,9 +120,9 @@ function PublicationDialog({ draft, zones, siblings, onChange, onSave, onClose }
         </div>
         {!zones.length && <p className={styles.inspectorHint}>{t("CourseTemplateEditorPage.noZoneHint")}</p>}
         {isDomain && <>
-          <label className={styles.field}><span>{t("CourseTemplateEditorPage.fieldHostnameTemplate")}</span><input value={draft.hostnamePrefix} onChange={(event) => onChange({ hostnamePrefix: event.target.value })} placeholder="{student}-app" /></label>
+          <label className={styles.field}><span>{t("CourseTemplateEditorPage.fieldHostnameTemplate")}</span><input value={draft.hostnamePrefix} onChange={(event) => onChange({ hostnamePrefix: event.target.value })} placeholder="{class}-{student}-app" /></label>
           <label className={styles.field}><span>{t("CourseTemplateEditorPage.fieldZone")}</span><select value={draft.zoneId} onChange={(event) => onChange({ zoneId: event.target.value })}>{zones.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          <p className={styles.inspectorHint}>{duplicated ? t("CourseTemplateEditorPage.duplicateHostnameHint") : t("CourseTemplateEditorPage.hostnameTemplateHint", { example: preview })}</p>
+          <p className={styles.inspectorHint}>{missingPlaceholder ? t("CourseTemplateEditorPage.hostnamePlaceholderRequired") : duplicated ? t("CourseTemplateEditorPage.duplicateHostnameHint") : t("CourseTemplateEditorPage.hostnameTemplateHint", { example: preview })}</p>
         </>}
       </div>
       <footer className={styles.createDialogFooter}>
@@ -192,7 +195,7 @@ function MachineEditor({ value, edges, publications, onChange, onEdgesChange, on
       protocol: "tcp",
       // 樣板必須帶 {student}，否則全班會搶同一個網址；同一份環境裡也不能重複，
       // 一個網址只能指向一個 port
-      hostnamePrefix: uniqueHostnamePrefix(`{student}-${hostnameSlug(node.name)}`, port),
+      hostnamePrefix: uniqueHostnamePrefix(`{class}-{student}-${hostnameSlug(node.name)}`, port),
       zoneId: zones[0]?.id ?? "",
       enableHttps: true,
     };
@@ -273,10 +276,10 @@ function MachineEditor({ value, edges, publications, onChange, onEdgesChange, on
 
   const nodePublications = publications.filter((item) => item.nodeKey === selectedNode?.id);
 
-  /** 給老師看的示範網址：{student} 換成一個代表性的帳號。 */
+  /** 給老師看的示範網址：使用課堂代號與匿名學生識別碼。 */
   function previewDomain(publication) {
     const zone = zones.find((item) => item.id === publication.zoneId);
-    const hostname = String(publication.hostnamePrefix || "").replace("{student}", "alice");
+    const hostname = String(publication.hostnamePrefix || "").replace("{class}", "linux101-a1b2c3").replace("{student}", "s8f21c4a2");
     return zone ? `${hostname}.${zone.name}` : hostname;
   }
 
