@@ -656,7 +656,7 @@
   "SubnetConfigForm.dnsServersPlaceholder": "Optional, comma-separated: 8.8.8.8,1.1.1.1",
   "SubnetConfigForm.editTitle": "Edit Subnet Config",
   "SubnetConfigForm.extraBlockedSubnets": "Default Blocked Subnets / IPs",
-  "SubnetConfigForm.extraBlockedSubnetsHint": "Saving will create or update outbound DROP rules on all VMs / LXCs, and remove any rules that have been taken out.",
+  "SubnetConfigForm.extraBlockedSubnetsHint": "Saving will create or update outbound DROP rules on all VMs / LXCs, and remove any rules that have been taken out. This restricts destinations for connections initiated by VMs; it is not a target blocklist for website or port publishing.",
   "SubnetConfigForm.extraBlockedSubnetsPlaceholder": "Optional, one per line, e.g.:\n192.168.100.0/24\n10.0.0.5",
   "SubnetConfigForm.gateway": "Gateway IP *",
   "SubnetConfigForm.gatewayPlaceholder": "e.g. 10.10.0.1",
