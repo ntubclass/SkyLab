@@ -236,7 +236,7 @@ export default function RequestFormPage({ onBack, className, initialPrefill = nu
   const { user }  = useAuth();
   const toast     = useToast();
   const isPrivileged = user?.is_superuser || user?.role === "admin" || user?.role === "teacher";
-  const { setCompactFooter, registerRequestForm, registerSurface } =
+  const { setCompactFooter, registerRequestForm, registerSurface, reportRequestSubmission } =
     useContext(LayoutContext);
   useEffect(() => { setCompactFooter(true); return () => setCompactFooter(false); }, [setCompactFooter]);
 
@@ -929,7 +929,8 @@ export default function RequestFormPage({ onBack, className, initialPrefill = nu
           : (!form.immediate_no_end && form.end_at ? { end_at: form.end_at } : {})),
       };
 
-      await VmRequestsService.create(body);
+      const created = await VmRequestsService.create(body);
+      reportRequestSubmission?.({ id: created.id });
       toast.success(t("RequestFormPage.submitSuccess"));
       handleBack();
     } catch (err) {

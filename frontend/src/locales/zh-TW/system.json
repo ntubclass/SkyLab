@@ -656,7 +656,7 @@
   "SubnetConfigForm.dnsServersPlaceholder": "選填，多組以逗號分隔：8.8.8.8,1.1.1.1",
   "SubnetConfigForm.editTitle": "編輯子網設定",
   "SubnetConfigForm.extraBlockedSubnets": "預設封鎖網段 / IP",
-  "SubnetConfigForm.extraBlockedSubnetsHint": "儲存時會在所有 VM / LXC 上建立或更新出站 DROP 規則，並清除已移除的舊規則。",
+  "SubnetConfigForm.extraBlockedSubnetsHint": "儲存時會在所有 VM / LXC 上建立或更新出站 DROP 規則，並清除已移除的舊規則。此設定限制 VM 主動連線的目的地，不作為網站或連接埠發布的目標黑名單。",
   "SubnetConfigForm.extraBlockedSubnetsPlaceholder": "選填，每行一個，例：\n192.168.100.0/24\n10.0.0.5",
   "SubnetConfigForm.gateway": "閘道 IP *",
   "SubnetConfigForm.gatewayPlaceholder": "例：10.10.0.1",
