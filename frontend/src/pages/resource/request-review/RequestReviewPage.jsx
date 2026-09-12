@@ -367,11 +367,14 @@ export default function RequestReviewPage() {
     rawReviewComment && !CONSUMED_REQUEST_MARKERS.includes(rawReviewComment)
       ? rawReviewComment
       : null;
-  /* 待審數改掛在分頁角標上（原本的四張統計卡與分頁選項資訊重複，已移除） */
-  const pendingCount = useMemo(
-    () => allRequests.filter((request) => request.reviewStatus === "pending").length,
-    [allRequests],
-  );
+  /* 各狀態筆數掛在分頁角標上（同金鑰管理；原本的四張統計卡已移除） */
+  const tabCounts = useMemo(() => {
+    const counts = { all: allRequests.length };
+    for (const request of allRequests) {
+      counts[request.reviewStatus] = (counts[request.reviewStatus] ?? 0) + 1;
+    }
+    return counts;
+  }, [allRequests]);
 
   const visibleRequests = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -403,7 +406,7 @@ export default function RequestReviewPage() {
           options={tabs.map(({ key, label }) => ({
             value: key,
             label,
-            badge: key === "pending" && pendingCount > 0 ? pendingCount : undefined,
+            badge: tabCounts[key] ?? 0,
           }))}
           value={activeTab}
           onChange={setActiveTab}

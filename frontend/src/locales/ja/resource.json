@@ -153,7 +153,7 @@
   "RequestReviewPage.paramLabelChangeType": "変更タイプ",
   "RequestReviewPage.emptyTitle": "申請がありません",
   "RequestReviewPage.pageTitle": "申請審査",
-  "RequestReviewPage.pageSubtitle": "作成・スペック変更・AI API キー・削除の各申請を一元管理。リソースの削除は既に承認された審査件数に影響しません",
+  "RequestReviewPage.pageSubtitle": "作成・スペック変更の申請をここで審査します。AI API キー申請は専用の審査ページで処理します",
   "RequestReviewPage.searchPlaceholder": "ホスト、申請者、状態で検索",
   "RequestReviewPage.loadingRequests": "申請を読み込み中...",
   "RequestReviewPage.retry": "再試行",

@@ -153,7 +153,7 @@
   "RequestReviewPage.paramLabelChangeType": "Change Type",
   "RequestReviewPage.emptyTitle": "No requests",
   "RequestReviewPage.pageTitle": "Request Review",
-  "RequestReviewPage.pageSubtitle": "View creation, spec change, AI API key and deletion requests in one place; deleting a resource does not reduce the already-approved review count",
+  "RequestReviewPage.pageSubtitle": "Review creation and spec change requests in one place; AI API key requests have their own review page",
   "RequestReviewPage.searchPlaceholder": "Search host, applicant or status",
   "RequestReviewPage.loadingRequests": "Loading requests...",
   "RequestReviewPage.retry": "Retry",

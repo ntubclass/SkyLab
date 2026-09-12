@@ -153,7 +153,7 @@
   "RequestReviewPage.paramLabelChangeType": "變更類型",
   "RequestReviewPage.emptyTitle": "沒有申請",
   "RequestReviewPage.pageTitle": "申請審核",
-  "RequestReviewPage.pageSubtitle": "集中查看建立、規格調整、AI API 金鑰與刪除請求；刪除資源不會扣除原本已通過的審核數量",
+  "RequestReviewPage.pageSubtitle": "集中審核建立與規格調整申請；AI API 金鑰申請在專屬審核頁處理",
   "RequestReviewPage.searchPlaceholder": "搜尋主機、申請人或狀態",
   "RequestReviewPage.loadingRequests": "讀取申請中...",
   "RequestReviewPage.retry": "重試",
