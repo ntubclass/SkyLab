@@ -9,7 +9,8 @@ import { useConfirm } from "../../../components/ConfirmDialog/ConfirmProvider";
 import { useToast } from "../../../hooks/useToast";
 import { focusInvalidField } from "../../../utils/focusField";
 import PageHeader from "../../../components/PageHeader/PageHeader";
-import { formatDateTime } from "../../../utils/formatDate";
+import RrdChart from "../../../components/RrdChart/RrdChart";
+import { formatDateTime, formatMonthDay } from "../../../utils/formatDate";
 
 /* ── helpers ── */
 function isExpired(value) {
@@ -278,6 +279,32 @@ function UsageStatCard({ label, value }) {
   );
 }
 
+/* ── Usage: 逐日 Tokens 折線圖（#7）── */
+function DailyUsageChart({ daily }) {
+  const { t } = useTranslation("ai");
+  const data = useMemo(
+    () => (daily ?? []).map((point) => ({
+      time: formatMonthDay(point.date),
+      input: point.input_tokens,
+      output: point.output_tokens,
+    })),
+    [daily],
+  );
+  /* 區間內完全沒用量就不畫（統計卡已是 0），有值才值得佔版面 */
+  if (data.length === 0 || data.every((point) => !point.input && !point.output)) return null;
+  return (
+    <RrdChart
+      title={t("AiApiPage.usageDailyTitle")}
+      data={data}
+      series={[
+        { key: "input", label: t("AiApiPage.usageStatInputTokens"), color: "--color-info" },
+        { key: "output", label: t("AiApiPage.usageStatOutputTokens"), color: "--color-success" },
+      ]}
+      height={180}
+    />
+  );
+}
+
 /* ── Usage: by-model / by-call-type breakdown ── */
 function UsageBreakdown({ icon, title, entries, formatter }) {
   const { t } = useTranslation("ai");
@@ -388,6 +415,7 @@ function MyUsageTab() {
                   <UsageStatCard label={t("AiApiPage.usageStatInputTokens")} value={formatTokens(proxyData.total_input_tokens)} />
                   <UsageStatCard label={t("AiApiPage.usageStatOutputTokens")} value={formatTokens(proxyData.total_output_tokens)} />
                 </div>
+                <DailyUsageChart daily={proxyData.daily} />
                 <UsageBreakdown
                   icon="bar_chart"
                   title={t("AiApiPage.usageBreakdownByModel")}
@@ -415,6 +443,7 @@ function MyUsageTab() {
                   <UsageStatCard label={t("AiApiPage.usageStatInputTokens")} value={formatTokens(templateData.total_input_tokens)} />
                   <UsageStatCard label={t("AiApiPage.usageStatOutputTokens")} value={formatTokens(templateData.total_output_tokens)} />
                 </div>
+                <DailyUsageChart daily={templateData.daily} />
                 <UsageBreakdown
                   icon="auto_awesome"
                   title={t("AiApiPage.usageBreakdownByCallType")}

@@ -56,6 +56,7 @@
   "AiApiPage.usageStatInputTokens": "Input Tokens",
   "AiApiPage.usageStatOutputTokens": "Output Tokens",
   "AiApiPage.usageBreakdownByModel": "By Model",
+  "AiApiPage.usageDailyTitle": "Daily token usage",
   "AiApiPage.usageBreakdownByCallType": "By Call Type",
   "AiApiPage.pageSubtitle": "Request, manage, and view AI API keys.",
   "AiApiPage.statLabelRequests": "Request History",
