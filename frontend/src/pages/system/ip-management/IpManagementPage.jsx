@@ -10,6 +10,7 @@ import { IpManagementService } from "../../../services/ipManagement";
 import { useConfirm } from "../../../components/ConfirmDialog/ConfirmProvider";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
+import useDialogPresence from "../../../hooks/useDialogPresence";
 import PageHeader from "../../../components/PageHeader/PageHeader";
 import { formatDateTime } from "../../../utils/formatDate";
 
@@ -72,7 +73,9 @@ export default function IpManagementPage() {
   const [status, setStatus] = useState(null);
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(false);
+  /* 開窗時快照 config：Modal 內表單自持狀態，背景刷新不會洗掉輸入 */
+  const [editing, setEditing] = useState(null); // null | { config }
+  const editPresence = useDialogPresence(editing);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -96,8 +99,8 @@ export default function IpManagementPage() {
   }, [toast, t]);
 
   useEffect(() => { load(); }, [load]);
-  /* 編輯中不背景刷新，避免表單被重新掛載而清空輸入 */
-  useAutoRefresh(() => { if (!editing) load(true); });
+  /* 表單已改 Modal 且開窗時快照 config，背景刷新不會影響輸入 */
+  useAutoRefresh(() => load(true));
 
   /* getSubnet 需要管理員權限，非管理員只能靠 status 判斷是否已設定 */
   const configured = Boolean(subnet) || Boolean(status?.configured);
@@ -147,7 +150,7 @@ export default function IpManagementPage() {
     try {
       await IpManagementService.upsertSubnet(payload);
       toast.success(t("IpManagementPage.toastSubnetSaved"));
-      setEditing(false);
+      setEditing(null);
       await load();
     } catch (e) {
       toast.error(e?.message ?? t("IpManagementPage.toastSaveSubnetFailed"));
@@ -168,7 +171,7 @@ export default function IpManagementPage() {
     try {
       await IpManagementService.deleteSubnet();
       toast.success(t("IpManagementPage.toastSubnetDeleted"));
-      setEditing(false);
+      setEditing(null);
       await load();
     } catch (e) {
       toast.error(e?.message ?? t("IpManagementPage.toastDeleteSubnetFailed"));
@@ -180,12 +183,12 @@ export default function IpManagementPage() {
   return (
     <div className={styles.page}>
       <PageHeader title={t("IpManagementPage.pageTitle")} subtitle={t("IpManagementPage.pageSubtitle")}>
-        {isAdmin && !editing && (
+        {isAdmin && (
           <div className={styles.pageActions}>
             <button
               type="button"
               className={styles.btnPrimary}
-              onClick={() => setEditing(true)}
+              onClick={() => setEditing({ config: subnet })}
             >
               <MIcon name={configured ? "edit" : "add"} size={18} />
               {configured ? t("IpManagementPage.editSubnetConfig") : t("IpManagementPage.createSubnetConfig")}
@@ -224,15 +227,15 @@ export default function IpManagementPage() {
         </div>
       </div>
 
-      {editing && (
+      {editPresence.open && (
         <SubnetConfigForm
-          key={subnet?.updated_at ?? "new"}
-          config={subnet}
+          config={editPresence.item.config}
           cidrLocked={cidrLocked}
           saving={saving}
           deleting={deleting}
+          closing={editPresence.closing}
           onSubmit={handleSave}
-          onCancel={() => setEditing(false)}
+          onCancel={() => setEditing(null)}
           onDelete={handleDelete}
         />
       )}
@@ -262,7 +265,7 @@ export default function IpManagementPage() {
           <EmptyState
             variant={emptyVariant}
             canConfigure={isAdmin && !editing}
-            onConfigure={() => setEditing(true)}
+            onConfigure={() => setEditing({ config: subnet })}
           />
         ) : (
           <div className={styles.tableWrap}>
