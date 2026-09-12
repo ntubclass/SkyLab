@@ -266,6 +266,13 @@
   white-space: nowrap;
 }
 
+/* 核准後的套用進度：次要灰字，不佔主 badge 位置（#4） */
+.rowProgress {
+  font-size: $font-size-10;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
 .rowActions {
   display: flex;
   gap: $spacing-8;

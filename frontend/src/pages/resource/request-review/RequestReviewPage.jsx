@@ -24,6 +24,8 @@ function useTabs() {
   ], [t]);
 }
 
+/* 主 badge 只反映審核者的決策結果（#4）：准／不准／還沒定，
+   加上申請自身的取消與過期。核准後的執行進度是申請人的事，降為次要灰字。 */
 function useStatusMeta() {
   const { t } = useTranslation("resource");
   return useMemo(() => ({
@@ -32,29 +34,22 @@ function useStatusMeta() {
     rejected: { label: t("RequestReviewPage.statusRejected"), tone: "danger" },
     cancelled: { label: t("RequestReviewPage.statusCancelled"), tone: "muted" },
     expired: { label: t("RequestReviewPage.statusExpired"), tone: "muted" },
-    running: { label: t("RequestReviewPage.statusRunning"), tone: "info" },
-    completed: { label: t("RequestReviewPage.statusCompleted"), tone: "muted" },
-    failed: { label: t("RequestReviewPage.statusFailed"), tone: "danger" },
-    /* 規格調整：核准後由申請人自己按「套用」，所以 approved 再依套用進度細分 */
-    approved_awaiting_apply: { label: t("RequestReviewPage.statusAwaitingApply"), tone: "success" },
-    applying: { label: t("RequestReviewPage.statusApplying"), tone: "info" },
-    applied: { label: t("RequestReviewPage.statusApplied"), tone: "success" },
-    apply_failed: { label: t("RequestReviewPage.statusApplyFailed"), tone: "danger" },
   }), [t]);
 }
 
-function specReviewStatus(request) {
-  if (request.status !== "approved") return request.status;
+/** 規格調整核准後的套用進度（列表次要資訊用；未核准回傳 null） */
+function specProgressLabel(request, t) {
+  if (request.status !== "approved") return null;
   switch (request.apply_status) {
     case "applied":
-      return "applied";
+      return t("RequestReviewPage.statusApplied");
     case "applying":
-      return "applying";
+      return t("RequestReviewPage.statusApplying");
     case "failed":
     case "interrupted":
-      return "apply_failed";
+      return t("RequestReviewPage.statusApplyFailed");
     default:
-      return "approved_awaiting_apply";
+      return t("RequestReviewPage.statusAwaitingApply");
   }
 }
 
@@ -186,7 +181,8 @@ function normalizeSpecRequest(request, t) {
     source: "spec",
     raw: request,
     reviewStatus: request.status,
-    status: specReviewStatus(request),
+    status: request.status,
+    progressText: specProgressLabel(request, t),
     title: request.resource_name
       ? t("RequestReviewPage.specChangeTitleNamed", { name: request.resource_name, vmid: request.vmid })
       : t("RequestReviewPage.specChangeTitle", { vmid: request.vmid }),
@@ -459,6 +455,7 @@ export default function RequestReviewPage() {
                     </div>
                     <div className={styles.rowSide}>
                       <StatusBadge status={request.status} />
+                      {request.progressText && <span className={styles.rowProgress}>{request.progressText}</span>}
                       <span className={styles.rowTime}>{request.timeText}</span>
                     </div>
                   </button>
