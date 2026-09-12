@@ -226,8 +226,9 @@ function CredentialCard({ item, onRefresh }) {
         <button type="button" className={styles.btnOutline} onClick={() => copy("API Key", item.api_key)}>
           <MIcon name="content_copy" size={16} /> API Key
         </button>
-        <button type="button" className={styles.btnOutline} onClick={doRotate} disabled={inactive || busy}>
-          <MIcon name="refresh" size={16} /> {t("AiApiPage.actionRefresh")}
+        {/* 重新產生金鑰是破壞性動作（舊金鑰立即失效），不叫「刷新」也不長得像刷新 */}
+        <button type="button" className={`${styles.btnOutline} ${styles.btnDanger}`} onClick={doRotate} disabled={inactive || busy}>
+          <MIcon name="autorenew" size={16} /> {t("AiApiPage.actionRotate")}
         </button>
         <button type="button" className={`${styles.btnOutline} ${styles.btnDanger}`} onClick={doDelete} disabled={busy}>
           <MIcon name="delete" size={16} /> {t("AiApiPage.actionDelete")}
