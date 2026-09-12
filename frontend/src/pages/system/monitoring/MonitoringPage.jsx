@@ -5,6 +5,7 @@ import MIcon from "../../../components/MIcon";
 import LoadingState from "../../../components/LoadingState/LoadingState";
 import EmptyState from "../../../components/EmptyState/EmptyState";
 import RrdChart from "../../../components/RrdChart/RrdChart";
+import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
 import MiningIncidentsPanel from "./MiningIncidentsPanel";
 import { MonitoringService } from "../../../services/monitoring";
 import { useToast } from "../../../hooks/useToast";
@@ -120,7 +121,7 @@ function NodeTrends({ node, timeframe }) {
   );
 }
 
-function AlertsCard() {
+function AlertsCard({ onCountChange }) {
   const { t } = useTranslation("system");
   const toast = useToast();
   const METRIC_LABELS = { cpu: "CPU", memory: t("MonitoringPage.memoryLabel"), disk: t("MonitoringPage.diskLabel") };
@@ -141,6 +142,11 @@ function AlertsCard() {
     const timer = setInterval(load, 30_000);
     return () => clearInterval(timer);
   }, [load]);
+
+  /* 分頁角標要顯示筆數，載入後回報給頁面 */
+  useEffect(() => {
+    if (alerts !== null) onCountChange?.(alerts.length);
+  }, [alerts, onCountChange]);
 
   const handleAck = async (alertId) => {
     setAckBusy(alertId);
@@ -228,13 +234,12 @@ function TopVmTable({ title, entries, metric }) {
         <EmptyState icon="dns" title={t("MonitoringPage.emptyNoRunningResources")} />
       ) : (
         <div className={styles.tableScroll}>
+        {/* 半版寬容不下 5 欄：VMID／名稱／類型合併成一欄（#24） */}
         <table className={styles.topTable}>
           <thead>
             <tr>
-              <th className={styles.th}>VMID</th>
-              <th className={styles.th}>{t("MonitoringPage.colName")}</th>
+              <th className={styles.th}>{t("MonitoringPage.colMachine")}</th>
               <th className={styles.th}>{t("MonitoringPage.colNode")}</th>
-              <th className={styles.th}>{t("MonitoringPage.colType")}</th>
               <th className={`${styles.th} ${styles.thRight}`}>
                 {metric === "cpu" ? "CPU" : t("MonitoringPage.memoryLabel")}
               </th>
@@ -243,14 +248,18 @@ function TopVmTable({ title, entries, metric }) {
           <tbody>
             {entries.map((vm) => (
               <tr key={vm.vmid} className={styles.tr}>
-                <td className={`${styles.td} ${styles.monoCell}`}>{vm.vmid}</td>
-                <td className={styles.td}>{vm.name}</td>
-                <td className={`${styles.td} ${styles.mutedCell}`}>{vm.node}</td>
                 <td className={styles.td}>
-                  <span className={styles.typeBadge}>
-                    {vm.type === "qemu" ? "VM" : "LXC"}
-                  </span>
+                  <div className={styles.vmCell}>
+                    <span className={styles.typeBadge}>
+                      {vm.type === "qemu" ? "VM" : "LXC"}
+                    </span>
+                    <div className={styles.vmCellText}>
+                      <strong>{vm.name}</strong>
+                      <span className={styles.mutedText}>#{vm.vmid}</span>
+                    </div>
+                  </div>
                 </td>
+                <td className={`${styles.td} ${styles.mutedCell}`}>{vm.node}</td>
                 <td className={`${styles.td} ${styles.numericCell}`}>
                   {metric === "cpu" ? `${(vm.cpu * 100).toFixed(1)}%` : formatBytes(vm.mem)}
                 </td>
@@ -276,6 +285,10 @@ export default function MonitoringPage() {
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  /* 警告與挖礦事件收進分頁（#24）；筆數由面板載入後回報 */
+  const [panelTab, setPanelTab] = useState("alerts");
+  const [alertCount, setAlertCount] = useState(null);
+  const [miningCount, setMiningCount] = useState(null);
 
   const load = useCallback(async (signal) => {
     try {
@@ -354,41 +367,50 @@ export default function MonitoringPage() {
           pct={diskPct}
           detail={`${formatBytes(overview.disk_used)} / ${formatBytes(overview.disk_total)}`}
         />
+        {/* 運行狀態：三個數字排三欄，不再擠成三行小字（#24） */}
         <div className={styles.overviewCard}>
-          <div className={styles.overviewTop}>
-            <div className={styles.overviewInfo}>
-              <span className={styles.overviewLabel}>{t("MonitoringPage.runningStatus")}</span>
-              <span className={styles.statusLine}>
-                {t("MonitoringPage.nodesOnline")}{" "}
-                <strong>
-                  {overview.nodes_online}/{overview.nodes_total}
-                </strong>
-              </span>
-              <span className={styles.statusLine}>
-                {t("MonitoringPage.vmRunning")} <strong>{overview.vms_running}</strong>
-                <span className={styles.mutedText}>
-                  /{overview.vms_running + overview.vms_stopped}
-                </span>
-              </span>
-              <span className={styles.statusLine}>
-                {t("MonitoringPage.lxcRunning")} <strong>{overview.lxc_running}</strong>
-                <span className={styles.mutedText}>
-                  /{overview.lxc_running + overview.lxc_stopped}
-                </span>
-              </span>
+          <span className={styles.overviewLabel}>{t("MonitoringPage.runningStatus")}</span>
+          <div className={styles.statusGrid}>
+            <div>
+              <span>{t("MonitoringPage.nodesOnline")}</span>
+              <strong>{overview.nodes_online}/{overview.nodes_total}</strong>
             </div>
-            <div className={styles.overviewIcon}>
-              <MIcon name="monitor_heart" size={20} />
+            <div>
+              <span>{t("MonitoringPage.vmRunning")}</span>
+              <strong>
+                {overview.vms_running}
+                <em>/{overview.vms_running + overview.vms_stopped}</em>
+              </strong>
+            </div>
+            <div>
+              <span>{t("MonitoringPage.lxcRunning")}</span>
+              <strong>
+                {overview.lxc_running}
+                <em>/{overview.lxc_running + overview.lxc_stopped}</em>
+              </strong>
             </div>
           </div>
         </div>
       </div>
 
-      {/* 活動警告 */}
-      <AlertsCard />
-
-      {/* 挖礦事件（模組 D，位置比照舊版監控頁） */}
-      <MiningIncidentsPanel />
+      {/* 警告與挖礦事件收進分頁（#24）；兩個面板保持掛載，輪詢與角標持續更新 */}
+      <div className={styles.panelTabs}>
+        <SegmentedControl
+          options={[
+            { value: "alerts", label: t("MonitoringPage.tabAlerts"), badge: alertCount ?? undefined },
+            { value: "mining", label: t("MonitoringPage.tabMining"), badge: miningCount ?? undefined },
+          ]}
+          value={panelTab}
+          onChange={setPanelTab}
+          ariaLabel={t("MonitoringPage.panelTabsAria")}
+        />
+      </div>
+      <div className={panelTab === "alerts" ? undefined : styles.tabHidden}>
+        <AlertsCard onCountChange={setAlertCount} />
+      </div>
+      <div className={panelTab === "mining" ? undefined : styles.tabHidden}>
+        <MiningIncidentsPanel onCountChange={setMiningCount} />
+      </div>
 
       {/* 節點用量 */}
       <div className={styles.card}>

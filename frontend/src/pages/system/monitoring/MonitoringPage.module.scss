@@ -108,23 +108,49 @@
   color: var(--color-text-muted);
 }
 
-.overviewIcon {
-  width: 40px;
-  height: 40px;
-  border-radius: $radius-8;
-  background: var(--color-hover);
-  color: var(--color-primary);
-  @include flex-center;
-  flex-shrink: 0;
-}
+/* 運行狀態卡：三個數字排三欄（#24，取代原本擠成三行的 statusLine） */
+.statusGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: $spacing-8;
+  flex: 1;
+  align-content: center;
 
-.statusLine {
-  font-size: $font-size-14;
-  color: var(--color-text-primary);
+  > div {
+    @include flex-column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  span {
+    font-size: $font-size-10;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
 
   strong {
+    font-size: $font-size-18;
     font-weight: $font-weight-700;
+    color: var(--color-text-primary);
+    font-variant-numeric: tabular-nums;
+
+    em {
+      font-size: $font-size-12;
+      font-style: normal;
+      font-weight: $font-weight-500;
+      color: var(--color-text-muted);
+    }
   }
+}
+
+/* 警告／挖礦事件分頁切換列 */
+.panelTabs {
+  display: flex;
+}
+
+/* 未選中的面板隱藏但保持掛載：輪詢與角標筆數持續更新 */
+.tabHidden {
+  display: none;
 }
 
 .mutedText {
@@ -301,7 +327,31 @@
 /* Top 5 表在半版寬的卡片內，min-width 取小值讓它卷動而非硬擠（#24 重排前的過渡） */
 .topTable {
   @include table-base;
-  min-width: 520px;
+  min-width: 380px;
+}
+
+/* Top 5 的機器欄：類型小徽章＋名稱＋VMID 合併一欄（#24） */
+.vmCell {
+  display: flex;
+  align-items: center;
+  gap: $spacing-8;
+  min-width: 0;
+}
+
+.vmCellText {
+  @include flex-column;
+  min-width: 0;
+
+  strong {
+    overflow: hidden;
+    font-weight: $font-weight-500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  span {
+    font-size: $font-size-10;
+  }
 }
 
 .th {
