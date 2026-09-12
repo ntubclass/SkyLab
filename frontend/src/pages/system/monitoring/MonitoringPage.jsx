@@ -456,7 +456,10 @@ export default function MonitoringPage() {
                   >
                     <td className={styles.td}>
                       <span className={styles.nodeCell}>
-                        {online && <MIcon name={expanded ? "expand_more" : "chevron_right"} size={16} />}
+                        {/* 離線列沒有展開箭頭，補同寬佔位讓圖示與名稱跟其他列對齊 */}
+                        {online
+                          ? <MIcon name={expanded ? "expand_more" : "chevron_right"} size={16} />
+                          : <span className={styles.chevronSpacer} />}
                         <MIcon name="dns" size={16} />
                         <strong>{node.node}</strong>
                         {node.connection_name && (

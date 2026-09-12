@@ -314,6 +314,12 @@
 }
 
 /* ── 表格 ── */
+/* 離線列的展開箭頭佔位（與 16px 的 MIcon 同寬），名稱欄才對得齊 */
+.chevronSpacer {
+  width: 16px;
+  flex-shrink: 0;
+}
+
 /* 卡片內表格沒有 table-wrap，橫向卷動由 .tableScroll 提供 */
 .tableScroll {
   overflow-x: auto;
