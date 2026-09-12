@@ -572,6 +572,7 @@
   "SettingsPage.quotasSubtitle": "全体のデフォルト上限と、ユーザーごとの上書き設定です。",
   "SettingsPage.quotasTitle": "クォータ",
   "SettingsPage.resourceThresholdsTitle": "リソース評価しきい値",
+  "SettingsPage.restore": "元に戻す",
   "SettingsPage.save": "保存",
   "SettingsPage.saveConnection": "接続を保存",
   "SettingsPage.saveSchedulerSettings": "スケジューリング設定を保存",

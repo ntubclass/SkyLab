@@ -572,6 +572,7 @@
   "SettingsPage.quotasSubtitle": "全域預設的資源上限，以及個別使用者的覆寫。",
   "SettingsPage.quotasTitle": "配額",
   "SettingsPage.resourceThresholdsTitle": "資源評估閾值",
+  "SettingsPage.restore": "還原",
   "SettingsPage.save": "儲存",
   "SettingsPage.saveConnection": "儲存連線",
   "SettingsPage.saveSchedulerSettings": "儲存排程設定",

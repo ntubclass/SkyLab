@@ -90,6 +90,15 @@
   gap: $spacing-8;
 }
 
+/* 頁面層級的儲存列：固定放頁尾（form 的最後一個子元素）；
+   未儲存就跳離由 UnsavedChangesContext 攔截確認。卡片內的表單仍用 .cardActions。 */
+.saveBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: $spacing-8;
+}
 .btnPrimary,
 .btnSecondary {
   display: inline-flex;

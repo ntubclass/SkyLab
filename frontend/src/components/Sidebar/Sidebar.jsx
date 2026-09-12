@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth }  from "../../contexts/AuthContext";
+import { useUnsavedChanges } from "../../contexts/UnsavedChangesContext";
 import { SUPPORTED_LANGUAGES, setLanguage } from "../../i18n";
 import styles from "./Sidebar.module.scss";
 import MIcon from "../MIcon";
@@ -343,6 +344,7 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
   const langBtnRef = useRef(null);
   const userBtnRef = useRef(null);
   const { user, logout } = useAuth();
+  const { confirmLeave } = useUnsavedChanges();
   const isAdmin = Boolean(user?.is_superuser || user?.role === "admin");
   const canTeach = isAdmin || user?.role === "teacher";
   const visibleNavGroups = navGroups
@@ -376,7 +378,8 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
     .filter(Boolean)
     .join(" ");
 
-  const handleNav = (key) => {
+  const handleNav = async (key) => {
+    if (!(await confirmLeave())) return;
     navigate(`/${key}`);
     onClose?.();
   };

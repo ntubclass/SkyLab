@@ -572,6 +572,7 @@
   "SettingsPage.quotasSubtitle": "Global default resource limits and per-user overrides.",
   "SettingsPage.quotasTitle": "Quotas",
   "SettingsPage.resourceThresholdsTitle": "Resource Assessment Thresholds",
+  "SettingsPage.restore": "Restore",
   "SettingsPage.save": "Save",
   "SettingsPage.saveConnection": "Save Connection",
   "SettingsPage.saveSchedulerSettings": "Save Scheduling Settings",

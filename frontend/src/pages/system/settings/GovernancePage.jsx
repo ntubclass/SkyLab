@@ -5,6 +5,7 @@ import LoadingState from "../../../components/LoadingState/LoadingState";
 import PageHeader from "../../../components/PageHeader/PageHeader";
 import { GovernanceService } from "../../../services/governance";
 import { useToast } from "../../../hooks/useToast";
+import { useUnsavedChangesGuard } from "../../../contexts/UnsavedChangesContext";
 
 /**
  * 治理設定（系統管理 → 治理）：閾值警告 / TTL 回收 / 閒置偵測 / 自動判斷 /
@@ -114,7 +115,10 @@ function GovernanceForm() {
     ...s.fields.map((f) => f.key),
   ]), [SECTIONS]);
   const [form, setForm] = useState(null);
+  const [baseline, setBaseline] = useState(null);
   const [saving, setSaving] = useState(false);
+  const dirty = Boolean(form && baseline && ALL_KEYS.some((key) => form[key] !== baseline[key]));
+  useUnsavedChangesGuard(dirty);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,6 +128,7 @@ function GovernanceForm() {
         const next = {};
         for (const key of ALL_KEYS) next[key] = config[key];
         setForm(next);
+        setBaseline(next);
       })
       .catch((err) => toast.error(err?.message ?? t("GovernanceTab.toastLoadFailed")));
     return () => {
@@ -141,6 +146,7 @@ function GovernanceForm() {
       const next = {};
       for (const key of ALL_KEYS) next[key] = updated[key];
       setForm(next);
+      setBaseline(next);
       toast.success(t("GovernanceTab.toastSaved"));
     } catch (err) {
       toast.error(t("GovernanceTab.toastSaveFailed", { message: err?.message ?? t("GovernanceTab.unknownError") }));
@@ -192,8 +198,13 @@ function GovernanceForm() {
         </div>
       ))}
 
-      <div className={styles.cardActions}>
-        <button type="submit" className={styles.btnPrimary} disabled={saving}>
+      <div className={styles.saveBar}>
+        {dirty && (
+          <button type="button" className={styles.btnSecondary} disabled={saving} onClick={() => setForm(baseline)}>
+            {t("SettingsPage.restore")}
+          </button>
+        )}
+        <button type="submit" className={styles.btnPrimary} disabled={!dirty || saving}>
           {saving ? t("GovernanceTab.saving") : t("GovernanceTab.saveConfig")}
         </button>
       </div>

@@ -4,6 +4,7 @@ import styles from "./settings.module.scss";
 import LoadingState from "../../../components/LoadingState/LoadingState";
 import { useToast } from "../../../hooks/useToast";
 import { ProxmoxConfigService } from "../../../services/proxmoxConfig";
+import { useUnsavedChangesGuard } from "../../../contexts/UnsavedChangesContext";
 import PageHeader from "../../../components/PageHeader/PageHeader";
 
 /**
@@ -107,7 +108,7 @@ function useSchedulerGroups(t) {
   ], [t]);
 }
 
-function SchedulerForm({ form, setField, onSave, saving }) {
+function SchedulerForm({ form, setField, onSave, saving, dirty, onRestore }) {
   const { t } = useTranslation("system");
   const SCHEDULER_GROUPS = useSchedulerGroups(t);
   return (
@@ -131,8 +132,13 @@ function SchedulerForm({ form, setField, onSave, saving }) {
         </div>
       ))}
 
-      <div className={styles.cardActions}>
-        <button type="submit" className={styles.btnPrimary} disabled={saving}>
+      <div className={styles.saveBar}>
+        {dirty && (
+          <button type="button" className={styles.btnSecondary} disabled={saving} onClick={onRestore}>
+            {t("SettingsPage.restore")}
+          </button>
+        )}
+        <button type="submit" className={styles.btnPrimary} disabled={!dirty || saving}>
           {saving ? t("SettingsPage.saving") : t("SettingsPage.saveSchedulerSettings")}
         </button>
       </div>
@@ -145,12 +151,19 @@ export default function SchedulerPage() {
   const { t } = useTranslation("system");
   const toast = useToast();
   const [form, setForm] = useState(buildFormFromConfig(null));
+  const [baseline, setBaseline] = useState(form);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const dirty = Object.keys(form).some((key) => form[key] !== baseline[key]);
+  useUnsavedChangesGuard(dirty);
 
   useEffect(() => {
     ProxmoxConfigService.getConfig()
-      .then((cfg) => setForm(buildFormFromConfig(cfg)))
+      .then((cfg) => {
+        const next = buildFormFromConfig(cfg);
+        setForm(next);
+        setBaseline(next);
+      })
       .catch((err) => toast.error(err?.message ?? t("SettingsPage.toastLoadSchedulerFailed")))
       .finally(() => setLoading(false));
   }, [toast, t]);
@@ -164,7 +177,9 @@ export default function SchedulerPage() {
     setSaving(true);
     try {
       const updated = await ProxmoxConfigService.updateConfig(buildPayload(form));
-      setForm(buildFormFromConfig(updated));
+      const next = buildFormFromConfig(updated);
+      setForm(next);
+      setBaseline(next);
       toast.success(t("SettingsPage.toastSettingsSaved"));
     } catch (err) {
       toast.error(err?.message ?? t("SettingsPage.toastSaveSettingsFailed"));
@@ -180,7 +195,14 @@ export default function SchedulerPage() {
         {loading ? (
           <LoadingState fullPage text={t("SettingsPage.loadingSettings")} />
         ) : (
-          <SchedulerForm form={form} setField={setField} onSave={handleSave} saving={saving} />
+          <SchedulerForm
+            form={form}
+            setField={setField}
+            onSave={handleSave}
+            saving={saving}
+            dirty={dirty}
+            onRestore={() => setForm(baseline)}
+          />
         )}
       </div>
     </div>
