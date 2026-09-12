@@ -58,6 +58,8 @@ function PurposeBadge({ purpose }) {
   );
 }
 
+const PAGE_SIZE = 50;
+
 export default function IpManagementPage() {
   const { t } = useTranslation("system");
   const toast = useToast();
@@ -79,7 +81,7 @@ export default function IpManagementPage() {
     if (!silent) setLoading(true);
     try {
       const [allocRes, subnetRes, statusRes] = await Promise.all([
-        IpManagementService.listAllocations({ limit: 500 }),
+        IpManagementService.listAllocations(),
         IpManagementService.getSubnet().catch(() => null),
         IpManagementService.getStatus().catch(() => null),
       ]);
@@ -123,6 +125,16 @@ export default function IpManagementPage() {
         String(a.vmid ?? "").includes(q),
     );
   }, [allocations, filter]);
+
+  /* 前端分頁：一個 /24 就是 254 列，不分頁會一次全部渲染 */
+  const [page, setPage] = useState(0);
+  useEffect(() => { setPage(0); }, [filter]);
+  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pagedAllocations = useMemo(
+    () => visible.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE),
+    [visible, safePage],
+  );
 
   const emptyVariant = !configured
     ? "unconfigured"
@@ -263,7 +275,7 @@ export default function IpManagementPage() {
                 </tr>
               </thead>
               <tbody>
-                {visible.map((a) => (
+                {pagedAllocations.map((a) => (
                   <tr key={a.ip_address} className={styles.tr}>
                     <td className={styles.td}>
                       <div className={styles.nameCell}>
@@ -285,6 +297,33 @@ export default function IpManagementPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {!loading && totalPages > 1 && (
+          <div className={styles.pagination}>
+            <span className={styles.paginationInfo}>
+              {t("IpManagementPage.paginationInfo", { count: visible.length, page: safePage + 1, totalPages })}
+            </span>
+            <div className={styles.paginationBtns}>
+              <button
+                type="button"
+                className={styles.btnSecondary}
+                disabled={safePage === 0}
+                onClick={() => setPage((p) => Math.max(p - 1, 0))}
+              >
+                <MIcon name="chevron_left" size={16} />
+                {t("IpManagementPage.prevPage")}
+              </button>
+              <button
+                type="button"
+                className={styles.btnSecondary}
+                disabled={safePage + 1 >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                {t("IpManagementPage.nextPage")}
+                <MIcon name="chevron_right" size={16} />
+              </button>
+            </div>
           </div>
         )}
       </div>

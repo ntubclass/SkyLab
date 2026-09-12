@@ -18,6 +18,8 @@ const ROLE_ICONS = {
   admin: "admin_panel_settings",
 };
 
+const PAGE_SIZE = 50;
+
 function initialForm(user = null) {
   return {
     email: user?.email ?? "",
@@ -239,13 +241,15 @@ export default function AdminPage() {
   const modalPresence  = useDialogPresence(modal);
   const deletePresence = useDialogPresence(deleteTarget);
 
-  /** silent = true 時不觸發 loading 與錯誤提示，供背景自動刷新使用 */
+  /** silent = true 時不觸發 loading 與錯誤提示，供背景自動刷新使用。
+      逐頁取回全部使用者（原本寫死 limit 100，第 101 位之後在這頁根本管不到）；
+      清單改由前端分頁呈現，搜尋因此能掃到全部帳號。 */
   const fetchUsers = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const res = await UsersService.list({ limit: 100 });
-      setUsers(res?.data ?? []);
-      setCount(res?.count ?? 0);
+      const data = await UsersService.listAll();
+      setUsers(data);
+      setCount(data.length);
     } catch (err) {
       if (!silent) toast.error(err?.message ?? t("AdminPage.toastLoadFailed"));
     } finally {
@@ -267,6 +271,15 @@ export default function AdminPage() {
         .some((value) => String(value).toLowerCase().includes(keyword)),
     );
   }, [query, users]);
+
+  /* 前端分頁：搜尋過濾後再切頁；條件一改就回到第一頁 */
+  const [page, setPage] = useState(0);
+  useEffect(() => { setPage(0); }, [query]);
+  const totalPages = Math.max(1, Math.ceil(visibleUsers.length / PAGE_SIZE));
+  const pagedUsers = useMemo(
+    () => visibleUsers.slice(Math.min(page, totalPages - 1) * PAGE_SIZE, (Math.min(page, totalPages - 1) + 1) * PAGE_SIZE),
+    [visibleUsers, page, totalPages],
+  );
 
   const stats = useMemo(() => ({
     active: users.filter((item) => item.is_active).length,
@@ -358,17 +371,46 @@ export default function AdminPage() {
         ) : visibleUsers.length === 0 ? (
           <EmptyState hasQuery={Boolean(query.trim())} />
         ) : (
-          <div className={styles.list}>
-            {visibleUsers.map((item) => (
-              <UserRow
-                key={item.id}
-                user={item}
-                currentUserId={currentUser?.id}
-                onEdit={(target) => setModal({ mode: "edit", user: target })}
-                onDelete={setDeleteTarget}
-              />
-            ))}
-          </div>
+          <>
+            <div className={styles.list}>
+              {pagedUsers.map((item) => (
+                <UserRow
+                  key={item.id}
+                  user={item}
+                  currentUserId={currentUser?.id}
+                  onEdit={(target) => setModal({ mode: "edit", user: target })}
+                  onDelete={setDeleteTarget}
+                />
+              ))}
+            </div>
+            {totalPages > 1 && (
+              <div className={styles.pagination}>
+                <span className={styles.paginationInfo}>
+                  {t("AdminPage.paginationInfo", { count: visibleUsers.length, page: Math.min(page, totalPages - 1) + 1, totalPages })}
+                </span>
+                <div className={styles.paginationBtns}>
+                  <button
+                    type="button"
+                    className={styles.btnSecondary}
+                    disabled={page === 0}
+                    onClick={() => setPage((p) => Math.max(p - 1, 0))}
+                  >
+                    <MIcon name="chevron_left" size={16} />
+                    {t("AdminPage.prevPage")}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.btnSecondary}
+                    disabled={page + 1 >= totalPages}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    {t("AdminPage.nextPage")}
+                    <MIcon name="chevron_right" size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
