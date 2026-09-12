@@ -45,6 +45,35 @@ function mapNodeRrd(points) {
     }));
 }
 
+/* ── 節點用量表的異常優先收斂 ──
+   監控頁的用途是找問題，不是逐一巡禮：離線或任一資源偏高的節點永遠
+   顯示且排最前，其餘按用量取前幾名，剩下收進「顯示全部」。 */
+const NODE_ATTENTION_SHARE = 80;
+const NODE_COLLAPSED_EXTRA = 5;
+
+function nodeMaxShare(node) {
+  const cpu = node.maxcpu > 0 ? node.cpu * 100 : 0;
+  const mem = node.maxmem > 0 ? (node.mem / node.maxmem) * 100 : 0;
+  const disk = node.maxdisk > 0 ? (node.disk / node.maxdisk) * 100 : 0;
+  return Math.max(cpu, mem, disk);
+}
+
+function nodeNeedsAttention(node) {
+  return node.status !== "online" || nodeMaxShare(node) >= NODE_ATTENTION_SHARE;
+}
+
+/** 需注意的在前，其餘用量高的在前；同分按名稱穩定排序，輪詢間不跳動 */
+function rankNodes(nodes) {
+  return [...nodes].sort((a, b) => {
+    const aa = nodeNeedsAttention(a);
+    const ba = nodeNeedsAttention(b);
+    if (aa !== ba) return aa ? -1 : 1;
+    const diff = nodeMaxShare(b) - nodeMaxShare(a);
+    if (Math.abs(diff) > 0.001) return diff;
+    return a.node.localeCompare(b.node);
+  });
+}
+
 function UsageBar({ pct }) {
   return (
     <div className={styles.usageBar}>
@@ -296,6 +325,8 @@ export default function MonitoringPage() {
   const [panelTab, setPanelTab] = useState("alerts");
   const [alertCount, setAlertCount] = useState(null);
   const [miningCount, setMiningCount] = useState(null);
+  /* 節點多時預設只列需注意與用量最高的，其餘收進「顯示全部」 */
+  const [showAllNodes, setShowAllNodes] = useState(false);
 
   const load = useCallback(async (signal) => {
     try {
@@ -332,6 +363,16 @@ export default function MonitoringPage() {
       </div>
     );
   }
+
+  const rankedNodes = rankNodes(overview.nodes);
+  const collapsedCount = Math.min(
+    rankedNodes.length,
+    rankedNodes.filter(nodeNeedsAttention).length + NODE_COLLAPSED_EXTRA,
+  );
+  const hiddenNodeCount = rankedNodes.length - collapsedCount;
+  const nodesToRender = showAllNodes || hiddenNodeCount === 0
+    ? rankedNodes
+    : rankedNodes.slice(0, collapsedCount);
 
   const cpuPct = overview.cpu_total > 0 ? (overview.cpu_used / overview.cpu_total) * 100 : 0;
   const memPct = overview.mem_total > 0 ? (overview.mem_used / overview.mem_total) * 100 : 0;
@@ -441,7 +482,7 @@ export default function MonitoringPage() {
             </tr>
           </thead>
           <tbody>
-            {overview.nodes.map((node) => {
+            {nodesToRender.map((node) => {
               const online = node.status === "online";
               const nodeCpu = node.maxcpu > 0 ? node.cpu * 100 : 0;
               const nodeMem = node.maxmem > 0 ? (node.mem / node.maxmem) * 100 : 0;
@@ -525,6 +566,18 @@ export default function MonitoringPage() {
           </tbody>
         </table>
         </div>
+        {hiddenNodeCount > 0 && (
+          <button
+            type="button"
+            className={styles.showAllBtn}
+            onClick={() => setShowAllNodes((value) => !value)}
+          >
+            <MIcon name={showAllNodes ? "expand_less" : "expand_more"} size={16} />
+            {showAllNodes
+              ? t("MonitoringPage.collapseNodes", { count: hiddenNodeCount })
+              : t("MonitoringPage.showAllNodes", { count: rankedNodes.length })}
+          </button>
+        )}
       </div>
 
       {/* Top VMs */}
