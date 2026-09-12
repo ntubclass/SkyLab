@@ -12,7 +12,7 @@ import { VmRequestsService } from "../../services/vmRequests";
 import translations from "../../locales/zh-TW/components.json";
 
 vi.mock("../../contexts/AuthContext", () => ({ useAuth: () => ({ user: { id: "student" } }) }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: translate }) }));
+vi.mock("react-i18next", async (importOriginal) => ({ ...(await importOriginal()), useTranslation: () => ({ t: translate }) }));
 vi.mock("../../services/aiNavigation", () => ({ AiNavigationService: { resolve: vi.fn(), intake: vi.fn() } }));
 vi.mock("../../services/aiTemplateRecommendation", () => ({ AiTemplateRecommendationApi: { chat: vi.fn(), recommend: vi.fn() } }));
 vi.mock("../../services/aiContextualHelp", () => ({
