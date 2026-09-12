@@ -6,7 +6,6 @@ import SharedEmptyState from "../../../components/EmptyState/EmptyState";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
 import LoadingState from "../../../components/LoadingState/LoadingState";
-import { DeletionRequestsService } from "../../../services/deletionRequests";
 import { SpecChangeRequestsService } from "../../../services/specChangeRequests";
 import { VmRequestsService } from "../../../services/vmRequests";
 import { CONSUMED_REQUEST_MARKERS } from "../../../services/pendingResources";
@@ -138,16 +137,14 @@ function specChangeLabel(request, t) {
   return parts.join(" / ") || request.change_type || "-";
 }
 
-/* AI API 金鑰申請有專屬的 /ai-api-review 頁，這裡不重複列出 */
+/* AI API 金鑰申請有專屬的 /ai-api-review 頁；刪除申請是自動處理的佇列
+   （無審核動作），由背景任務頁呈現，這裡都不列出 */
 function sourceLabel(source, t) {
-  if (source === "vm") return t("RequestReviewPage.sourceCreate");
-  if (source === "spec") return t("RequestReviewPage.sourceSpec");
-  return t("RequestReviewPage.sourceDeletion");
+  return source === "spec" ? t("RequestReviewPage.sourceSpec") : t("RequestReviewPage.sourceCreate");
 }
 
 function sourceIcon(item) {
   if (item.source === "spec") return "tune";
-  if (item.source === "deletion") return "delete_outline";
   return item.raw?.resource_type === "vm" ? "computer" : "terminal";
 }
 
@@ -204,29 +201,6 @@ function normalizeSpecRequest(request, t) {
     nodeText: `VMID ${request.vmid}`,
     createdAt: request.created_at,
     reviewedAt: request.reviewed_at,
-  };
-}
-
-function normalizeDeletionRequest(request, t) {
-  return {
-    id: `deletion:${request.id}`,
-    rawId: request.id,
-    source: "deletion",
-    raw: request,
-    reviewStatus: "other",
-    status: request.status,
-    title: `${request.name || "Resource"} / VMID ${request.vmid}`,
-    user: request.user_full_name || request.user_email || t("RequestReviewPage.unknownUser"),
-    userSubtext: request.user_email || request.user_id || "-",
-    timeText: formatDateTime(request.created_at, t),
-    specText: `${request.resource_type || "resource"} / ${request.node || "unknown node"}`,
-    reason: request.error_message || t("RequestReviewPage.deletionReasonDefault"),
-    paramLabel: t("RequestReviewPage.paramLabelDeleteParams"),
-    paramText: `purge=${request.purge ? "yes" : "no"} / force=${request.force ? "yes" : "no"}`,
-    gpuText: "-",
-    nodeText: request.node || "unknown node",
-    createdAt: request.created_at,
-    reviewedAt: request.completed_at,
   };
 }
 
@@ -291,15 +265,13 @@ export default function RequestReviewPage() {
       setError("");
     }
     try {
-      const [vmRes, specRes, deletionRes] = await Promise.all([
+      const [vmRes, specRes] = await Promise.all([
         VmRequestsService.listAll(undefined),
         SpecChangeRequestsService.listAll(),
-        DeletionRequestsService.listAll(),
       ]);
       const items = [
         ...(vmRes.data ?? []).map((r) => normalizeVmRequest(r, t)),
         ...(specRes.data ?? []).map((r) => normalizeSpecRequest(r, t)),
-        ...(deletionRes.data ?? []).map((r) => normalizeDeletionRequest(r, t)),
       ].sort(
         (a, b) =>
           new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime(),
@@ -372,10 +344,8 @@ export default function RequestReviewPage() {
       };
       if (selected.source === "vm") {
         await VmRequestsService.review(selected.rawId, body);
-      } else if (selected.source === "spec") {
-        await SpecChangeRequestsService.review(selected.rawId, body);
       } else {
-        return;
+        await SpecChangeRequestsService.review(selected.rawId, body);
       }
       toast.success(status === "approved" ? t("RequestReviewPage.approvedToast") : t("RequestReviewPage.rejectedToast"));
       setComment("");
@@ -397,13 +367,11 @@ export default function RequestReviewPage() {
     rawReviewComment && !CONSUMED_REQUEST_MARKERS.includes(rawReviewComment)
       ? rawReviewComment
       : null;
-  const stats = useMemo(() => {
-    const source = allRequests.length ? allRequests : requests;
-    const pending = source.filter((request) => request.reviewStatus === "pending").length;
-    const approved = source.filter((request) => request.reviewStatus === "approved").length;
-    const rejected = source.filter((request) => request.reviewStatus === "rejected").length;
-    return { total: source.length, pending, approved, rejected };
-  }, [allRequests, requests]);
+  /* 待審數改掛在分頁角標上（原本的四張統計卡與分頁選項資訊重複，已移除） */
+  const pendingCount = useMemo(
+    () => allRequests.filter((request) => request.reviewStatus === "pending").length,
+    [allRequests],
+  );
 
   const visibleRequests = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -429,49 +397,14 @@ export default function RequestReviewPage() {
     <div className={styles.page}>
       <PageHeader title={t("RequestReviewPage.pageTitle")} subtitle={t("RequestReviewPage.pageSubtitle")} />
 
-      <div className={styles.statRow}>
-        <div className={styles.statCard}>
-          <div className={styles.statIcon}>
-            <MIcon name="assignment" size={20} />
-          </div>
-          <div className={styles.statInfo}>
-            <span className={styles.statLabel}>{t("RequestReviewPage.statTotal")}</span>
-            <span className={styles.statValue}>{stats.total}</span>
-          </div>
-        </div>
-        <div className={styles.statCard}>
-          <div className={`${styles.statIcon} ${styles.statIconBusy}`}>
-            <MIcon name="pending_actions" size={20} />
-          </div>
-          <div className={styles.statInfo}>
-            <span className={styles.statLabel}>{t("RequestReviewPage.statPending")}</span>
-            <span className={styles.statValue}>{stats.pending}</span>
-          </div>
-        </div>
-        <div className={styles.statCard}>
-          <div className={`${styles.statIcon} ${styles.statIconOk}`}>
-            <MIcon name="task_alt" size={20} />
-          </div>
-          <div className={styles.statInfo}>
-            <span className={styles.statLabel}>{t("RequestReviewPage.statApproved")}</span>
-            <span className={styles.statValue}>{stats.approved}</span>
-          </div>
-        </div>
-        <div className={styles.statCard}>
-          <div className={`${styles.statIcon} ${styles.statIconDanger}`}>
-            <MIcon name="block" size={20} />
-          </div>
-          <div className={styles.statInfo}>
-            <span className={styles.statLabel}>{t("RequestReviewPage.statRejected")}</span>
-            <span className={styles.statValue}>{stats.rejected}</span>
-          </div>
-        </div>
-      </div>
-
       <div className={styles.tabsRow}>
         <SegmentedControl
           className={styles.tabsControl}
-          options={tabs.map(({ key, label }) => ({ value: key, label }))}
+          options={tabs.map(({ key, label }) => ({
+            value: key,
+            label,
+            badge: key === "pending" && pendingCount > 0 ? pendingCount : undefined,
+          }))}
           value={activeTab}
           onChange={setActiveTab}
           ariaLabel={t("RequestReviewPage.tabsAriaLabel")}
@@ -562,11 +495,7 @@ export default function RequestReviewPage() {
                       {contextError}
                     </div>
                   )}
-                  {selected.source === "deletion" ? (
-                    <div className={styles.rowActions}>
-                      <span className={styles.doneText}>{t("RequestReviewPage.deletionOnlyNote")}</span>
-                    </div>
-                  ) : !isPending && (
+                  {!isPending && (
                     <>
                       {(reviewNote || selected.reviewedAt) && (
                         <div className={styles.reasonBox}>
@@ -597,7 +526,7 @@ export default function RequestReviewPage() {
                   )}
                 </div>
 
-                {isPending && selected.source !== "deletion" && (
+                {isPending && (
                   <div className={styles.reviewBar}>
                     {specResourceGone && (
                       <div className={styles.rowActions}>
