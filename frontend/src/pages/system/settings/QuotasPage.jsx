@@ -12,6 +12,7 @@ import { useConfirm } from "../../../components/ConfirmDialog/ConfirmProvider";
 import { useToast } from "../../../hooks/useToast";
 import useDialogPresence from "../../../hooks/useDialogPresence";
 import { formatDateTime } from "../../../utils/formatDate";
+import RelatedSettingsNav from "./RelatedSettingsNav";
 
 /**
  * 配額（系統管理 → 配額）：全域預設上限 + 個別使用者覆寫。
@@ -547,6 +548,7 @@ export default function QuotasPage() {
   return (
     <div className={pageStyles.page}>
       <PageHeader title={t("SettingsPage.quotasTitle")} subtitle={t("SettingsPage.quotasSubtitle")} />
+      <RelatedSettingsNav current="quotas" />
       <div className={pageStyles.content}>
         <QuotasSection />
       </div>

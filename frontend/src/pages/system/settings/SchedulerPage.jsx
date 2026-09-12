@@ -6,6 +6,7 @@ import { useToast } from "../../../hooks/useToast";
 import { ProxmoxConfigService } from "../../../services/proxmoxConfig";
 import { useUnsavedChangesGuard } from "../../../contexts/UnsavedChangesContext";
 import PageHeader from "../../../components/PageHeader/PageHeader";
+import RelatedSettingsNav from "./RelatedSettingsNav";
 
 /**
  * 資源排程（系統管理 → 資源排程）：跨叢集共用的放置／超配／排程開機參數，
@@ -102,7 +103,7 @@ function useSchedulerGroups(t) {
         { key: "window_grace_period_minutes", label: t("SettingsPage.windowGracePeriodMinutes") },
         { key: "practice_session_hours", label: t("SettingsPage.practiceSessionHours") },
         { key: "practice_warning_minutes", label: t("SettingsPage.practiceWarningMinutes") },
-        { key: "expiry_warning_hours", label: t("SettingsPage.expiryWarningHours") },
+        { key: "expiry_warning_hours", label: t("SettingsPage.expiryWarningHours"), hint: t("SettingsPage.expiryWarningHoursHint") },
       ],
     },
   ], [t]);
@@ -126,6 +127,7 @@ function SchedulerForm({ form, setField, onSave, saving, dirty, onRestore }) {
                   value={form[f.key]}
                   onChange={(e) => setField(f.key, Number(e.target.value))}
                 />
+                {f.hint && <em className={styles.fieldHint}>{f.hint}</em>}
               </label>
             ))}
           </div>
@@ -191,6 +193,7 @@ export default function SchedulerPage() {
   return (
     <div className={styles.page}>
       <PageHeader title={t("SettingsPage.schedulerTitle")} subtitle={t("SettingsPage.schedulerSubtitle")} />
+      <RelatedSettingsNav current="scheduler" />
       <div className={styles.content}>
         {loading ? (
           <LoadingState fullPage text={t("SettingsPage.loadingSettings")} />

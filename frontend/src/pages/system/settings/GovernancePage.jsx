@@ -6,6 +6,7 @@ import PageHeader from "../../../components/PageHeader/PageHeader";
 import { GovernanceService } from "../../../services/governance";
 import { useToast } from "../../../hooks/useToast";
 import { useUnsavedChangesGuard } from "../../../contexts/UnsavedChangesContext";
+import RelatedSettingsNav from "./RelatedSettingsNav";
 
 /**
  * 治理設定（系統管理 → 治理）：閾值警告 / TTL 回收 / 閒置偵測 / 自動判斷 /
@@ -37,7 +38,7 @@ function useSections(t) {
         { key: "ttl_enabled", label: t("GovernanceTab.ttlEnabled"), hint: t("GovernanceTab.ttlEnabledHint") },
       ],
       fields: [
-        { key: "expiry_warn_days", label: t("GovernanceTab.expiryWarnDays"), min: 1, max: 30 },
+        { key: "expiry_warn_days", label: t("GovernanceTab.expiryWarnDays"), min: 1, max: 30, hint: t("GovernanceTab.expiryWarnDaysHint") },
         { key: "expiry_grace_delete_days", label: t("GovernanceTab.expiryGraceDeleteDays"), min: 0, max: 90, hint: t("GovernanceTab.expiryGraceDeleteDaysHint") },
       ],
     },
@@ -218,6 +219,7 @@ export default function GovernancePage() {
   return (
     <div className={styles.page}>
       <PageHeader title={t("SettingsPage.governanceTitle")} subtitle={t("SettingsPage.governanceSubtitle")} />
+      <RelatedSettingsNav current="governance" />
       <div className={styles.content}>
         <GovernanceForm />
       </div>
