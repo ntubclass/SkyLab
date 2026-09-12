@@ -6,6 +6,7 @@
   "ClassManagementPage.statusActive": "可以上課",
   "ClassManagementPage.statusArchived": "已結束",
   "ClassManagementPage.filterAll": "全部",
+  "ClassManagementPage.filterAriaLabel": "班級狀態篩選",
   "ClassManagementPage.filterPlanning": "準備中",
   "ClassManagementPage.filterBuilding": "建置中",
   "ClassManagementPage.filterPartialFailed": "需要處理",

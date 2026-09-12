@@ -6,6 +6,7 @@
   "ClassManagementPage.statusActive": "Ready for class",
   "ClassManagementPage.statusArchived": "Ended",
   "ClassManagementPage.filterAll": "All",
+  "ClassManagementPage.filterAriaLabel": "Class status filter",
   "ClassManagementPage.filterPlanning": "Planning",
   "ClassManagementPage.filterBuilding": "Building",
   "ClassManagementPage.filterPartialFailed": "Needs attention",
