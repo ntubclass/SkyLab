@@ -16,6 +16,7 @@ import {
   matchSurface,
 } from "../../services/aiContextualHelp";
 import MIcon from "../MIcon";
+import { formatDate } from "../../utils/formatDate";
 import useDialogPresence from "../../hooks/useDialogPresence";
 import useBodyScrollLock from "../../hooks/useBodyScrollLock";
 import styles from "./AiFloatingChat.module.scss";
@@ -160,7 +161,7 @@ export function describePlan(prefill = {}, t) {
     lines.push(tr("AiFloatingChat.planGpuLine", { gpu: prefill.gpu_mapping_id }, `GPU：${prefill.gpu_mapping_id}`));
   }
   if (prefill.start_at && prefill.end_at) {
-    const day = (value) => new Date(value).toLocaleDateString("zh-TW");
+    const day = (value) => formatDate(value);
     lines.push(tr(
       "AiFloatingChat.planTimeRangeLine",
       { start: day(prefill.start_at), end: day(prefill.end_at) },
