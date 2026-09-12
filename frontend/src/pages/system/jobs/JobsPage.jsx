@@ -9,6 +9,7 @@ import JobDetailDialog from "../../../components/Jobs/JobDetailDialog";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
 import PageHeader from "../../../components/PageHeader/PageHeader";
+import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
 import { formatDateTime } from "../../../utils/formatDate";
 
 function useKindLabels() {
@@ -148,30 +149,26 @@ export default function JobsPage() {
       </div>
 
       <div className={styles.toolbar}>
-        <label className={styles.selectWrap}>
+        <div className={styles.filterGroup}>
           <span className={styles.selectLabel}>{t("JobsPage.filterKind")}</span>
-          <select
-            className={styles.select}
+          <SegmentedControl
+            className={styles.filterTabs}
+            options={KIND_OPTIONS}
             value={kind}
-            onChange={(e) => setKind(e.target.value)}
-          >
-            {KIND_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className={styles.selectWrap}>
+            onChange={setKind}
+            ariaLabel={t("JobsPage.filterKind")}
+          />
+        </div>
+        <div className={styles.filterGroup}>
           <span className={styles.selectLabel}>{t("JobsPage.filterStatus")}</span>
-          <select
-            className={styles.select}
+          <SegmentedControl
+            className={styles.filterTabs}
+            options={STATUS_OPTIONS}
             value={status}
-            onChange={(e) => setStatus(e.target.value)}
-          >
-            {STATUS_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </label>
+            onChange={setStatus}
+            ariaLabel={t("JobsPage.filterStatus")}
+          />
+        </div>
       </div>
 
       <div className={styles.content}>
