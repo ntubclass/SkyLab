@@ -9,6 +9,7 @@ import MiningIncidentsPanel from "./MiningIncidentsPanel";
 import { MonitoringService } from "../../../services/monitoring";
 import { useToast } from "../../../hooks/useToast";
 import PageHeader from "../../../components/PageHeader/PageHeader";
+import { formatDateTime, formatTime } from "../../../utils/formatDate";
 
 function formatBytes(bytes) {
   if (!bytes) return "0 B";
@@ -34,10 +35,7 @@ function mapNodeRrd(points) {
   return (points ?? [])
     .filter((p) => typeof p.time === "number")
     .map((p) => ({
-      time: new Date(p.time * 1000).toLocaleTimeString("zh-TW", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+      time: formatTime(p.time * 1000),
       cpu: typeof p.cpu === "number" ? Number((p.cpu * 100).toFixed(2)) : null,
       memory:
         typeof p.memused === "number" && typeof p.memtotal === "number" && p.memtotal > 0
@@ -195,7 +193,7 @@ function AlertsCard() {
                     </span>
                   </div>
                   <p className={styles.alertTime}>
-                    {new Date(alert.created_at).toLocaleString("zh-TW")}
+                    {formatDateTime(alert.created_at)}
                     {alert.acknowledged_at && ` · ${t("MonitoringPage.acknowledged")}`}
                   </p>
                 </div>
@@ -229,7 +227,8 @@ function TopVmTable({ title, entries, metric }) {
       {entries.length === 0 ? (
         <EmptyState icon="dns" title={t("MonitoringPage.emptyNoRunningResources")} />
       ) : (
-        <table className={styles.table}>
+        <div className={styles.tableScroll}>
+        <table className={styles.topTable}>
           <thead>
             <tr>
               <th className={styles.th}>VMID</th>
@@ -259,6 +258,7 @@ function TopVmTable({ title, entries, metric }) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -398,6 +398,7 @@ export default function MonitoringPage() {
             <p className={styles.cardDesc}>{t("MonitoringPage.nodeUsageDesc")}</p>
           </div>
         </div>
+        <div className={styles.tableScroll}>
         <table className={styles.table}>
           <thead>
             <tr>
@@ -490,6 +491,7 @@ export default function MonitoringPage() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Top VMs */}

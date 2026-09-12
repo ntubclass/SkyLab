@@ -150,6 +150,8 @@
 
 .table {
   @include table-base;
+  /* 7 欄；沒有 min-width 時 table-wrap 的橫向卷動永遠不會觸發，欄位互擠讓狀態 badge 溢出 */
+  min-width: 1080px;
 }
 
 .th {

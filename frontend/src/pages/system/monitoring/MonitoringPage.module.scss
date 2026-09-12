@@ -288,8 +288,20 @@
 }
 
 /* ── 表格 ── */
+/* 卡片內表格沒有 table-wrap，橫向卷動由 .tableScroll 提供 */
+.tableScroll {
+  overflow-x: auto;
+}
+
 .table {
   @include table-base;
+  min-width: 880px;
+}
+
+/* Top 5 表在半版寬的卡片內，min-width 取小值讓它卷動而非硬擠（#24 重排前的過渡） */
+.topTable {
+  @include table-base;
+  min-width: 520px;
 }
 
 .th {
