@@ -449,6 +449,7 @@
   "MonitoringPage.memoryUsage": "Memory Usage",
   "MonitoringPage.nodeUsageDesc": "Click a node row to expand its usage trend chart",
   "MonitoringPage.nodeUsageTitle": "Node Usage",
+  "MonitoringPage.noTrendData": "No trend data for this node yet",
   "MonitoringPage.nodesOnline": "Nodes Online",
   "MonitoringPage.online": "Online",
   "MonitoringPage.pageSubtitle": "Cluster resource usage, node trends, and threshold alerts",

@@ -105,6 +105,13 @@ function NodeTrends({ node, timeframe }) {
     return <LoadingState text={t("MonitoringPage.loadingTrends")} />;
   }
 
+  /* RRD 可能回傳只有時間戳、指標全 null 的點位（節點剛離線／剛加入）：
+     畫出來是兩張只有座標軸的空圖，不如直接說沒資料 */
+  const hasValues = data.some((point) => point.cpu != null || point.memory != null);
+  if (data.length === 0 || !hasValues) {
+    return <EmptyState icon="show_chart" title={t("MonitoringPage.noTrendData")} />;
+  }
+
   return (
     <div className={styles.trendGrid}>
       {RRD_SERIES.map((s) => (
@@ -439,16 +446,17 @@ export default function MonitoringPage() {
               const nodeCpu = node.maxcpu > 0 ? node.cpu * 100 : 0;
               const nodeMem = node.maxmem > 0 ? (node.mem / node.maxmem) * 100 : 0;
               const nodeDisk = node.maxdisk > 0 ? (node.disk / node.maxdisk) * 100 : 0;
-              const expanded = expandedNode === node.node;
+              /* 離線節點沒有趨勢可看：列不可展開，也不給可點的 hover 暗示 */
+              const expanded = online && expandedNode === node.node;
               return (
                 <Fragment key={node.node}>
                   <tr
-                    className={`${styles.tr} ${styles.trClickable}`}
-                    onClick={() => setExpandedNode(expanded ? null : node.node)}
+                    className={`${styles.tr} ${online ? styles.trClickable : ""}`}
+                    onClick={online ? () => setExpandedNode(expanded ? null : node.node) : undefined}
                   >
                     <td className={styles.td}>
                       <span className={styles.nodeCell}>
-                        <MIcon name={expanded ? "expand_more" : "chevron_right"} size={16} />
+                        {online && <MIcon name={expanded ? "expand_more" : "chevron_right"} size={16} />}
                         <MIcon name="dns" size={16} />
                         <strong>{node.node}</strong>
                         {node.connection_name && (

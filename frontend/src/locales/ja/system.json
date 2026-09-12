@@ -449,6 +449,7 @@
   "MonitoringPage.memoryUsage": "メモリ使用率",
   "MonitoringPage.nodeUsageDesc": "ノードの行をクリックすると使用率トレンドグラフが展開されます",
   "MonitoringPage.nodeUsageTitle": "ノード使用率",
+  "MonitoringPage.noTrendData": "このノードのトレンドデータはまだありません",
   "MonitoringPage.nodesOnline": "オンラインノード",
   "MonitoringPage.online": "オンライン",
   "MonitoringPage.pageSubtitle": "クラスタのリソース使用率、ノードのトレンド、しきい値アラート",
