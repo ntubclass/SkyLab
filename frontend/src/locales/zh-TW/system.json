@@ -18,6 +18,8 @@
   "AdminPage.fieldPassword": "密碼",
   "AdminPage.fieldRole": "角色",
   "AdminPage.loading": "載入使用者...",
+  "AdminPage.ldapManagedPlaceholder": "由 LDAP 管理",
+  "AdminPage.ldapManagedHint": "此帳號由 LDAP 管理，本地密碼不可用；請在 LDAP 目錄變更密碼。",
   "AdminPage.modalCreateSubtitle": "建立可登入 SkyLab 的帳戶。",
   "AdminPage.modalCreateTitle": "新增使用者",
   "AdminPage.modalEditSubtitle": "調整帳戶狀態與角色。",

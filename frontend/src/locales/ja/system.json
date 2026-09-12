@@ -18,6 +18,8 @@
   "AdminPage.fieldPassword": "パスワード",
   "AdminPage.fieldRole": "ロール",
   "AdminPage.loading": "ユーザーを読み込み中...",
+  "AdminPage.ldapManagedPlaceholder": "LDAP で管理",
+  "AdminPage.ldapManagedHint": "このアカウントは LDAP で管理されています。ローカルパスワードは使用されません。パスワードは LDAP ディレクトリで変更してください。",
   "AdminPage.modalCreateSubtitle": "SkyLab にサインインできるアカウントを作成します。",
   "AdminPage.modalCreateTitle": "ユーザーを追加",
   "AdminPage.modalEditSubtitle": "アカウントの状態とロールを調整します。",

@@ -18,6 +18,8 @@
   "AdminPage.fieldPassword": "Password",
   "AdminPage.fieldRole": "Role",
   "AdminPage.loading": "Loading users...",
+  "AdminPage.ldapManagedPlaceholder": "Managed by LDAP",
+  "AdminPage.ldapManagedHint": "This account is managed by LDAP; the local password is not used. Change it in the LDAP directory.",
   "AdminPage.modalCreateSubtitle": "Create an account that can sign in to SkyLab.",
   "AdminPage.modalCreateTitle": "Add User",
   "AdminPage.modalEditSubtitle": "Adjust account status and role.",
