@@ -647,6 +647,9 @@
 
 /* 送出時未填的欄位：紅框標示並被聚焦（雙類名壓過 .field input 這類巢狀選擇器） */
 .fieldInvalid.fieldInvalid { @include form-control-invalid; }
+/* 反紅欄位下的一行 inline 錯誤說明：儲存鈕與必填欄位分屬不同分頁，
+   被傳送過來的使用者要看得到「為什麼」（#26），紅框本身不夠 */
+.fieldError { color: var(--color-danger); font-size: $font-size-12; font-style: normal; }
 
 /* ── 學習環境列表：篩選與搜尋比照「申請審核」、表格比照「我的申請」 ── */
 .envControls { display: flex; align-items: center; gap: $spacing-16; flex-wrap: wrap; }
