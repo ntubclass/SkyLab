@@ -9,6 +9,7 @@ import { useConfirm } from "../../../components/ConfirmDialog/ConfirmProvider";
 import { useToast } from "../../../hooks/useToast";
 import { focusInvalidField } from "../../../utils/focusField";
 import PageHeader from "../../../components/PageHeader/PageHeader";
+import { formatDateTime } from "../../../utils/formatDate";
 
 /* ── helpers ── */
 function isExpired(value) {
@@ -68,14 +69,10 @@ function CredentialCard({ item, onRefresh }) {
   const [nameInput, setNameInput] = useState(item.api_key_name);
   const [busy, setBusy] = useState(false);
 
-  function fmtTime(iso) {
-    return iso ? new Date(iso).toLocaleString("zh-TW") : "—";
-  }
-
   function fmtExpiry(value) {
     if (!value) return t("AiApiPage.durationOptionNever");
-    const d = new Date(value);
-    return d < new Date() ? t("AiApiPage.expiredFormat", { date: d.toLocaleString() }) : d.toLocaleString();
+    const label = formatDateTime(value);
+    return isExpired(value) ? t("AiApiPage.expiredFormat", { date: label }) : label;
   }
 
   function credStatusInfo(it) {
@@ -193,9 +190,9 @@ function CredentialCard({ item, onRefresh }) {
         </div>
         <div className={styles.credMeta}>
           <span>{t("AiApiPage.metaPrefix", { value: item.api_key_prefix })}</span>
-          <span>{t("AiApiPage.metaCreated", { value: fmtTime(item.created_at) })}</span>
+          <span>{t("AiApiPage.metaCreated", { value: formatDateTime(item.created_at) })}</span>
           <span className={expired ? styles.textDanger : ""}>{t("AiApiPage.metaExpiry", { value: fmtExpiry(item.expires_at) })}</span>
-          {item.revoked_at && <span>{t("AiApiPage.metaRevoked", { value: fmtTime(item.revoked_at) })}</span>}
+          {item.revoked_at && <span>{t("AiApiPage.metaRevoked", { value: formatDateTime(item.revoked_at) })}</span>}
         </div>
       </div>
 
@@ -244,10 +241,6 @@ function CredentialCard({ item, onRefresh }) {
 function RequestRow({ item }) {
   const { t } = useTranslation("ai");
 
-  function fmtTime(iso) {
-    return iso ? new Date(iso).toLocaleString("zh-TW") : "—";
-  }
-
   function statusLabel(status) {
     if (status === "approved") return t("AiApiPage.statusApproved");
     if (status === "rejected") return t("AiApiPage.statusRejected");
@@ -266,8 +259,8 @@ function RequestRow({ item }) {
       </div>
       <p className={styles.requestPurpose}>{item.purpose}</p>
       <div className={styles.requestMeta}>
-        <span>{t("AiApiPage.requestMetaApply", { value: fmtTime(item.created_at) })}</span>
-        <span>{t("AiApiPage.requestMetaReview", { value: item.reviewed_at ? fmtTime(item.reviewed_at) : t("AiApiPage.requestNotReviewed") })}</span>
+        <span>{t("AiApiPage.requestMetaApply", { value: formatDateTime(item.created_at) })}</span>
+        <span>{t("AiApiPage.requestMetaReview", { value: formatDateTime(item.reviewed_at, t("AiApiPage.requestNotReviewed")) })}</span>
         {item.review_comment && <span>{t("AiApiPage.requestMetaComment", { value: item.review_comment })}</span>}
       </div>
     </div>

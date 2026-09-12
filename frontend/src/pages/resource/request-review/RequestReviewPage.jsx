@@ -12,6 +12,7 @@ import { VmRequestsService } from "../../../services/vmRequests";
 import { CONSUMED_REQUEST_MARKERS } from "../../../services/pendingResources";
 import PageHeader from "../../../components/PageHeader/PageHeader";
 import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
+import { formatShortDateTime } from "../../../utils/formatDate";
 
 function useTabs() {
   const { t } = useTranslation("resource");
@@ -94,14 +95,7 @@ function ExpandableText({ text }) {
 }
 
 function formatDateTime(value, t) {
-  if (!value) return t("RequestReviewPage.notSet");
-  return new Date(value).toLocaleString("zh-TW", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return formatShortDateTime(value, t("RequestReviewPage.notSet"));
 }
 
 function formatRange(startAt, endAt, t) {

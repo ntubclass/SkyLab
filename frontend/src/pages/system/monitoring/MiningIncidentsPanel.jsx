@@ -7,6 +7,7 @@ import EmptyState from "../../../components/EmptyState/EmptyState";
 import { MiningIncidentsService } from "../../../services/miningIncidents";
 import { useToast } from "../../../hooks/useToast";
 import useDialogPresence from "../../../hooks/useDialogPresence";
+import { formatDateTime } from "../../../utils/formatDate";
 
 /** detected/suspended 視為待處理（紅），其餘中性 */
 function statusBadgeClass(status) {
@@ -147,7 +148,7 @@ export default function MiningIncidentsPanel() {
                   </span>
                 </td>
                 <td className={`${styles.td} ${styles.mutedCell}`}>
-                  {new Date(incident.detected_at).toLocaleString("zh-TW")}
+                  {formatDateTime(incident.detected_at)}
                 </td>
                 <td className={`${styles.td} ${styles.tdRight}`}>
                   {(incident.status === "detected" || incident.status === "suspended") && (

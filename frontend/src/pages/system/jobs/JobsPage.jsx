@@ -9,6 +9,7 @@ import JobDetailDialog from "../../../components/Jobs/JobDetailDialog";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
 import PageHeader from "../../../components/PageHeader/PageHeader";
+import { formatDateTime } from "../../../utils/formatDate";
 
 function useKindLabels() {
   const { t } = useTranslation("system");
@@ -60,10 +61,6 @@ function Progress({ value }) {
       <span className={styles.progressLabel}>{v}%</span>
     </div>
   );
-}
-
-function fmtDate(iso) {
-  return iso ? new Date(iso).toLocaleString("zh-TW") : "—";
 }
 
 export default function JobsPage() {
@@ -217,8 +214,8 @@ export default function JobsPage() {
                     <td className={styles.td}>
                       <Progress value={j.progress} />
                     </td>
-                    <td className={styles.td}>{fmtDate(j.created_at)}</td>
-                    <td className={styles.td}>{fmtDate(j.updated_at)}</td>
+                    <td className={styles.td}>{formatDateTime(j.created_at)}</td>
+                    <td className={styles.td}>{formatDateTime(j.updated_at)}</td>
                     <td className={styles.td}>{j.user_email ?? "—"}</td>
                   </tr>
                 ))}

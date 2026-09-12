@@ -10,6 +10,7 @@ import useAutoRefresh from "../../../hooks/useAutoRefresh";
 import useDialogPresence from "../../../hooks/useDialogPresence";
 import { UsersService } from "../../../services/users";
 import PageHeader from "../../../components/PageHeader/PageHeader";
+import { formatDate } from "../../../utils/formatDate";
 
 const ROLE_ICONS = {
   student: "school",
@@ -29,15 +30,6 @@ function initialForm(user = null) {
 
 function userDisplayName(user) {
   return user.full_name || user.email;
-}
-
-function formatDate(value) {
-  if (!value) return "—";
-  return new Date(value).toLocaleDateString("zh-TW", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
 }
 
 function EmptyState({ hasQuery }) {

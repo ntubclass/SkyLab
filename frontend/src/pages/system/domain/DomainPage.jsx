@@ -10,21 +10,11 @@ import useDialogPresence from "../../../hooks/useDialogPresence";
 import { CloudflareService } from "../../../services/cloudflare";
 import PageHeader from "../../../components/PageHeader/PageHeader";
 import { ReverseProxyPanel } from "../../network/reverse-proxy/ReverseProxyPage";
+import { formatDateTime } from "../../../utils/formatDate";
 
 const TAB_KEYS = ["dns", "reverse-proxy"];
 
 const DNS_TYPES = ["A", "AAAA", "CNAME", "TXT", "MX", "NS", "SRV"];
-
-function formatDate(value) {
-  if (!value) return "—";
-  return new Date(value).toLocaleString("zh-TW", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 /* ── 供應商設定 Modal ───────────────────────────────────── */
 
@@ -414,7 +404,7 @@ export default function DomainPage() {
           </span>
           {config.account_id && <span className={styles.configMeta}>{t("DomainPage.accountLabel")}{config.account_id}</span>}
           {config.last_verified_at && (
-            <span className={styles.configMeta}>{t("DomainPage.lastVerifiedLabel")}{formatDate(config.last_verified_at)}</span>
+            <span className={styles.configMeta}>{t("DomainPage.lastVerifiedLabel")}{formatDateTime(config.last_verified_at)}</span>
           )}
         </div>
       )}

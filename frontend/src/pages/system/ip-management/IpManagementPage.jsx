@@ -11,6 +11,7 @@ import { useConfirm } from "../../../components/ConfirmDialog/ConfirmProvider";
 import { useToast } from "../../../hooks/useToast";
 import useAutoRefresh from "../../../hooks/useAutoRefresh";
 import PageHeader from "../../../components/PageHeader/PageHeader";
+import { formatDateTime } from "../../../utils/formatDate";
 
 function EmptyState({ variant, canConfigure, onConfigure }) {
   const { t } = useTranslation("system");
@@ -279,11 +280,7 @@ export default function IpManagementPage() {
                     </td>
                     <td className={styles.td}>{a.vmid ?? "—"}</td>
                     <td className={styles.td}>{a.description ?? "—"}</td>
-                    <td className={styles.td}>
-                      {a.allocated_at
-                        ? new Date(a.allocated_at).toLocaleString("zh-TW")
-                        : "—"}
-                    </td>
+                    <td className={styles.td}>{formatDateTime(a.allocated_at)}</td>
                   </tr>
                 ))}
               </tbody>
