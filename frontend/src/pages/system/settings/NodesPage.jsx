@@ -117,23 +117,32 @@ function NodeList() {
           </label>
           {editing === node.id ? (
             <div className={styles.nodeEdit}>
-              <input
-                value={editForm.host}
-                onChange={(e) => setEditForm((p) => ({ ...p, host: e.target.value }))}
-                placeholder="Host"
-              />
-              <input
-                type="number"
-                value={editForm.port}
-                onChange={(e) => setEditForm((p) => ({ ...p, port: e.target.value }))}
-                placeholder="Port"
-              />
-              <input
-                type="number"
-                value={editForm.priority}
-                onChange={(e) => setEditForm((p) => ({ ...p, priority: e.target.value }))}
-                placeholder="Priority"
-              />
+              <label className={styles.inlineField}>
+                <span>Host</span>
+                <input
+                  value={editForm.host}
+                  onChange={(e) => setEditForm((p) => ({ ...p, host: e.target.value }))}
+                  placeholder="Host"
+                />
+              </label>
+              <label className={styles.inlineField}>
+                <span>Port</span>
+                <input
+                  type="number"
+                  value={editForm.port}
+                  onChange={(e) => setEditForm((p) => ({ ...p, port: e.target.value }))}
+                  placeholder="Port"
+                />
+              </label>
+              <label className={styles.inlineField}>
+                <span>{t("SettingsPage.nodePriorityLabel")}</span>
+                <input
+                  type="number"
+                  value={editForm.priority}
+                  onChange={(e) => setEditForm((p) => ({ ...p, priority: e.target.value }))}
+                  placeholder="Priority"
+                />
+              </label>
               <button type="button" className={styles.btnPrimary} disabled={saving} onClick={() => saveEdit(node)}>
                 {saving ? "..." : t("SettingsPage.save")}
               </button>
@@ -160,6 +169,7 @@ export default function NodesPage() {
     <div className={styles.page}>
       <PageHeader title={t("SettingsPage.nodesTitle")} subtitle={t("SettingsPage.nodesSubtitle")} />
       <div className={styles.content}>
+        <p className={styles.listHint}>{t("SettingsPage.nodesHint")}</p>
         <NodeList />
       </div>
     </div>

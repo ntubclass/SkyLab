@@ -293,6 +293,22 @@
   }
 }
 
+/* 節點／Storage 列的行內小欄位：可見標籤取代只有 tooltip 的裸控件（觸控裝置看不到 tooltip） */
+.inlineField {
+  @include flex-column;
+  gap: 2px;
+  font-size: $font-size-10;
+  font-weight: $font-weight-500;
+  color: var(--color-text-muted);
+}
+
+/* 清單頂的一行運作說明（欄位怎麼影響放置、何時生效） */
+.listHint {
+  margin: -$spacing-8 0 0;
+  font-size: $font-size-12;
+  color: var(--color-text-muted);
+}
+
 .inlineSelect,
 .inlineInput {
   min-height: 34px;

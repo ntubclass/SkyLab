@@ -52,6 +52,13 @@ function ConfigModal({ config, loading, closing = false, onClose, onSubmit }) {
           <div>
             <h2>{t("DomainPage.configModalTitle")}</h2>
             <p>{t("DomainPage.configModalDesc")}</p>
+            <p className={styles.modalGuide}>
+              {t("DomainPage.tokenGuideText")}{" "}
+              <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">
+                {t("DomainPage.tokenGuideLink")}
+                <MIcon name="open_in_new" size={13} />
+              </a>
+            </p>
           </div>
           <button type="button" className={styles.iconBtn} onClick={onClose} aria-label={t("DomainPage.close")}>
             <MIcon name="close" size={18} />
@@ -99,6 +106,7 @@ function ConfigModal({ config, loading, closing = false, onClose, onSubmit }) {
             />
           </label>
         </div>
+        <p className={styles.fieldHint}>{t("DomainPage.dnsTargetHint")}</p>
 
         <div className={styles.modalActions}>
           <button type="button" className={styles.btnSecondary} onClick={onClose} disabled={loading}>

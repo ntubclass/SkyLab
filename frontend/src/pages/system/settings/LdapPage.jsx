@@ -162,7 +162,7 @@ function LdapForm() {
         <p className={styles.cardDesc}>{t("LdapTab.serviceAccountSectionDesc")}</p>
         <div className={styles.formGrid}>
           <label className={styles.field}>
-            <span>Bind DN</span>
+            <span>{t("LdapTab.bindDn")}</span>
             <input
               value={form.bind_dn}
               onChange={(e) => setField("bind_dn", e.target.value)}
