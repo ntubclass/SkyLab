@@ -908,6 +908,8 @@ def _monitoring_bucket_rows(
             ),
             0,
         ).label("successful_calls"),
+        func.coalesce(func.sum(model.input_tokens), 0).label("input_tokens"),
+        func.coalesce(func.sum(model.output_tokens), 0).label("output_tokens"),
         func.count(model.request_duration_ms).label("duration_count"),
         func.coalesce(func.sum(model.request_duration_ms), 0).label("duration_sum"),
     ).where(*_monitoring_filters(model, start_date, end_date))
@@ -1069,6 +1071,7 @@ def get_monitoring_overview(
                     "bucket_start": bucket_start,
                     "total_calls": 0,
                     "successful_calls": 0,
+                    "total_tokens": 0,
                     "avg_latency_sum": 0.0,
                     "avg_latency_count": 0,
                     "proxy_calls": 0,
@@ -1079,10 +1082,11 @@ def get_monitoring_overview(
             successful_calls = int(row[2] or 0)
             item["total_calls"] += total_calls
             item["successful_calls"] += successful_calls
+            item["total_tokens"] += int(row[3] or 0) + int(row[4] or 0)
             item[source_key] += total_calls
-            duration_count = int(row[3] or 0)
+            duration_count = int(row[5] or 0)
             if duration_count:
-                item["avg_latency_sum"] += float(row[4] or 0)
+                item["avg_latency_sum"] += float(row[6] or 0)
                 item["avg_latency_count"] += duration_count
 
     series = []
@@ -1095,6 +1099,7 @@ def get_monitoring_overview(
                 "total_calls": total_calls,
                 "successful_calls": item["successful_calls"],
                 "failed_calls": failed_calls,
+                "total_tokens": item["total_tokens"],
                 "error_rate": (
                     None if total_calls == 0 else round(failed_calls / total_calls * 100, 2)
                 ),

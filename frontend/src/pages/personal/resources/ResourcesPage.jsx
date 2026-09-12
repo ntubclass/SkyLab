@@ -49,8 +49,8 @@ const TYPE_MAP = {
   qemu:  { labelKey: "ResourcesPage.typeQemu", icon: "computer" },
 };
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
-const DESKTOP_CLIENT_DOWNLOAD_URL = `${API_BASE_URL}/api/v1/desktop-client/download`;
+const DESKTOP_CLIENT_DOWNLOAD_URL = import.meta.env.VITE_DESKTOP_CLIENT_DOWNLOAD_URL
+  || "https://github.com/1Ray0/SkyLab-Connect-Releases/releases/latest/download/SkyLab-Connect-Setup.exe";
 
 /* ── Helpers ── */
 function formatDate(isoStr) {

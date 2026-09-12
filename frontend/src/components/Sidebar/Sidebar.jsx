@@ -12,6 +12,7 @@ import JobsButton from "../Jobs/JobsButton";
 
 const topItems = [
   { key: "dashboard", labelKey: "Sidebar.topDashboard", icon: "dashboard" },
+  { key: "courses", labelKey: "Sidebar.topCourses", icon: "school", studentOnly: true },
 ];
 
 const navGroups = [
@@ -346,6 +347,7 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
   const canTeach = isAdmin || user?.role === "teacher";
   /* 身在系統管理頁面時，整支側欄切換成「管理員設定」核心側欄 */
   const inAdminSettings = isAdmin && adminSettingsItems.some((item) => item.key === active);
+  const visibleTopItems = topItems.filter((item) => !item.studentOnly || !canTeach);
   const visibleNavGroups = navGroups
     .map((group) => ({
       ...group,
@@ -438,7 +440,7 @@ export default function Sidebar({ collapsed, mobileOpen, onToggle, onClose }) {
         </nav>
       ) : (
       <nav className={styles.nav}>
-        {topItems.map((item) => (
+        {visibleTopItems.map((item) => (
           <button
             key={item.key}
             type="button"

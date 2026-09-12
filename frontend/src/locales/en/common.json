@@ -136,6 +136,7 @@
   "UserGuide.aiApi.step16.title": "Template usage is the consumption from the template feature",
   "UserGuide.aiApi.step16.text": "This tracks calls made through the AI Template API, counted separately from the direct calls above, so you can tell which type of feature is consuming more.",
   "Sidebar.topDashboard": "Home",
+  "Sidebar.topCourses": "Courses",
   "Sidebar.groupResource": "Resources",
   "Sidebar.itemMyResources": "My Resources",
   "Sidebar.itemMyRequests": "My Requests",

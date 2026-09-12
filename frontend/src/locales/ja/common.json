@@ -136,6 +136,7 @@
   "UserGuide.aiApi.step16.title": "Template 使用量はテンプレート機能による消費量です",
   "UserGuide.aiApi.step16.text": "ここでは AI Template API 経由の呼び出しを集計しており、上記の直接呼び出しとは別に計算されます。どちらの機能がより多く消費しているかを判断するのに役立ちます。",
   "Sidebar.topDashboard": "ホーム",
+  "Sidebar.topCourses": "コース",
   "Sidebar.groupResource": "リソース",
   "Sidebar.itemMyResources": "マイリソース",
   "Sidebar.itemMyRequests": "マイ申請",
