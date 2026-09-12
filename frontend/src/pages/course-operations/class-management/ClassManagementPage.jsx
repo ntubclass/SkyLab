@@ -165,7 +165,6 @@ export default function ClassManagementPage() {
     </PageHeader>
 
     <div className={styles.classToolbar}>
-      <label className={styles.searchInput}><MIcon name="search" size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("ClassManagementPage.searchPlaceholder")} /></label>
       <SegmentedControl
         options={tabs.map((group) => ({
           value: group.key,
@@ -177,6 +176,7 @@ export default function ClassManagementPage() {
         onChange={setStatus}
         ariaLabel={t("ClassManagementPage.filterAriaLabel")}
       />
+      <label className={styles.searchInput}><MIcon name="search" size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("ClassManagementPage.searchPlaceholder")} /></label>
       {archivedCount > 0 && <label className={styles.archivedToggle}><input type="checkbox" checked={showArchived} onChange={(event) => { setShowArchived(event.target.checked); if (!event.target.checked) setStatus("all"); }} />{t("ClassManagementPage.showArchived", { count: archivedCount })}</label>}
     </div>
 
