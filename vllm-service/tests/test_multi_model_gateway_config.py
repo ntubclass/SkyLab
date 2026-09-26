@@ -199,7 +199,7 @@ def test_cluster_without_gateway_does_not_load_legacy_gateway_config(monkeypatch
         def stop_all(self):
             self.stopped = True
 
-    monkeypatch.setattr(launcher_main, "load_model_instances", lambda **kwargs: [])
+    monkeypatch.setattr(launcher_main, "load_model_instances", lambda **kwargs: [object()])
     monkeypatch.setattr(launcher_main, "validate_cluster_resources", lambda instances: None)
     monkeypatch.setattr(launcher_main, "load_gateway_config", lambda **kwargs: pytest.fail("legacy config loaded"))
     monkeypatch.setattr(launcher_main, "MultiModelEngineManager", FakeManager)

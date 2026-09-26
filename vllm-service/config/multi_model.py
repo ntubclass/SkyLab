@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from config.settings import PROJECT_ROOT, SERVICE_ENV_FILE_VAR, Settings
+from model_deployment import deployment_kind, upstream_connection
 
 GATEWAY_ENV_FILE_VAR = "VLLM_SERVICE_GATEWAY_ENV_FILE"
 DEFAULT_BASE_ENV = ".env.API"
@@ -143,6 +144,20 @@ def load_model_instances(
     for idx, model_config in enumerate(models_config):
         if not isinstance(model_config, dict):
             raise ValueError(f"模型配置 #{idx} 格式錯誤：應為物件")
+
+        if deployment_kind(model_config) == "remote":
+            upstream_connection(model_config)
+            alias = model_config.get("alias")
+            served_name = model_config.get("served_model_name")
+            if not isinstance(alias, str) or not alias.strip():
+                raise ValueError(f"模型配置 #{idx} 缺少 'alias' 欄位")
+            if not isinstance(served_name, str) or not served_name.strip():
+                raise ValueError(f"模型配置 #{idx} 缺少 'served_model_name' 欄位")
+            if alias.strip() in seen_alias:
+                raise ValueError(f"MODEL_ALIAS 重複: {alias.strip()}")
+            seen_alias.add(alias.strip())
+            # Remote engines are managed on their own hosts, never launched here.
+            continue
 
         effective_model_config = dict(model_config)
         if cli_overrides:
@@ -293,7 +308,7 @@ def validate_cluster_resources(instances: list[ModelInstanceConfig]) -> None:
     hard_limit = float(os.getenv("CLUSTER_GPU_UTIL_HARD_LIMIT", "0.95"))
     if total_gpu_util >= hard_limit:
         raise ValueError(
-            "三模型 GPU_MEMORY_UTILIZATION 總和過高: "
+            "本機模型 GPU_MEMORY_UTILIZATION 總和過高: "
             f"{total_gpu_util:.2f} >= {hard_limit:.2f}"
         )
 
