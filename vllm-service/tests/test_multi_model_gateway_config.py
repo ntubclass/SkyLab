@@ -41,6 +41,7 @@ def test_build_gateway_routes_loads_admission_and_capabilities(tmp_path: Path) -
                     "api_port": 8104,
                     "max_num_seqs": 24,
                     "scheduling_policy": "priority",
+                    "mamba_ssm_cache_dtype": "float32",
                     "enable_chunked_prefill": True,
                     "long_prefill_token_threshold": 4096,
                     "gateway_max_inflight": 6,
@@ -70,6 +71,7 @@ def test_build_gateway_routes_loads_admission_and_capabilities(tmp_path: Path) -
     assert args[args.index("--served-model-name") + 1] == "Qwen/Qwen3-14B-FP8"
     assert "--enable-chunked-prefill" in args
     assert "--long-prefill-token-threshold" in args
+    assert args[args.index("--mamba-ssm-cache-dtype") + 1] == "float32"
     assert "--max-num-partial-prefills" not in args
     assert "--max-long-partial-prefills" not in args
 

@@ -189,6 +189,7 @@ def load_model_instances(
             "disable_custom_all_reduce": "DISABLE_CUSTOM_ALL_REDUCE",
             "quantization": "QUANTIZATION",
             "kv_cache_dtype": "KV_CACHE_DTYPE",
+            "mamba_ssm_cache_dtype": "MAMBA_SSM_CACHE_DTYPE",
             "speculative_config": "SPECULATIVE_CONFIG",
             "vllm_nvfp4_gemm_backend": "VLLM_NVFP4_GEMM_BACKEND",
             "allowed_local_media_path": "ALLOWED_LOCAL_MEDIA_PATH",
