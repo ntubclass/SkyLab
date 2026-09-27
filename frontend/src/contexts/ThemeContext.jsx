@@ -15,9 +15,9 @@ export const THEME_OPTIONS = [
   { key: "system", label: "系統", icon: "monitor" },
 ];
 
-/** 介面風格選項：玻璃質感為預設 */
+/** 介面風格選項：毛玻璃為預設 */
 export const STYLE_OPTIONS = [
-  { key: "glass",  label: "毛玻璃質感", icon: "blur_on" },
+  { key: "glass",  label: "毛玻璃",   icon: "blur_on" },
   { key: "liquid", label: "液態玻璃",   icon: "opacity" },
   { key: "white",  label: "白底",     icon: "panorama_fish_eye" },
   { key: "black",  label: "黑底",     icon: "lens" },
