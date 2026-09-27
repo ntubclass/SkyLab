@@ -12,6 +12,8 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import MIcon from "../../components/MIcon";
 import PasswordInput from "../../components/PasswordInput/PasswordInput";
+import SegmentedControl from "../../components/SegmentedControl/SegmentedControl";
+import Stepper from "../../components/Stepper/Stepper";
 import { LoadingSpinner } from "../../components/LoadingState/LoadingState";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
@@ -25,6 +27,7 @@ const STEP_ADMIN = 0;
 const STEP_PROXMOX = 1;
 const STEP_SUBNET = 2;
 const STEP_FINISH = 3;
+const STEP_KEYS = ["admin", "proxmox", "subnet", "finish"];
 
 /* 語言用原生名稱顯示，不翻譯 */
 const LANG_OPTIONS = [
@@ -117,7 +120,8 @@ function ThemeToggle() {
   );
 }
 
-function PageShell({ children }) {
+/* 卡片寬度跟著內容走：精靈表單用寬卡；歡迎、已完成、載入、錯誤這類內容少的畫面用窄卡 */
+function PageShell({ wide = false, children }) {
   return (
     <div className={styles.page}>
       <div className={styles.glow} aria-hidden="true">
@@ -125,29 +129,11 @@ function PageShell({ children }) {
         <span />
         <span />
       </div>
-      <div className={styles.card}>
+      <div className={`${styles.card} ${wide ? styles.cardWide : ""}`}>
         <ThemeToggle />
         {children}
       </div>
     </div>
-  );
-}
-
-function Stepper({ current, steps }) {
-  return (
-    <ol className={styles.stepper} aria-label="steps">
-      {steps.map((label, index) => {
-        const state = index < current ? "done" : index === current ? "active" : "todo";
-        return (
-          <li key={label} className={`${styles.step} ${styles[`step_${state}`]}`} aria-current={state === "active" ? "step" : undefined}>
-            <span className={styles.stepIndex}>
-              {state === "done" ? <MIcon name="check" size={16} /> : index + 1}
-            </span>
-            <span className={styles.stepLabel}>{label}</span>
-          </li>
-        );
-      })}
-    </ol>
   );
 }
 
@@ -183,27 +169,84 @@ function DoneStep({ title, notice, onBack, onNext }) {
 
 /* ─── 歡迎：選語言 ───────────────────────────────────────── */
 
+/* 系統設定「減少動態效果」時為 true，設定變動會即時跟上 */
+function usePrefersReducedMotion() {
+  const query = "(prefers-reduced-motion: reduce)";
+  const [reduced, setReduced] = useState(() => typeof window !== "undefined" && Boolean(window.matchMedia?.(query).matches));
+  useEffect(() => {
+    const mq = window.matchMedia?.(query);
+    if (!mq) return undefined;
+    const onChange = () => setReduced(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return reduced;
+}
+
+const WELCOME_HOLD_MS = 2100;
+const WELCOME_FADE_MS = 400;
+
+/* 歡迎語輪流用三種語言顯示（還沒選語言的人也看得懂）。
+   離場動畫只在換句前一刻才播，分頁在背景被節流時文字仍停在畫面上，不會變空白；
+   螢幕閱讀器只讀目前介面語言那一句；系統要求減少動態時停在目前語言、不輪播 */
+function RotatingWelcome() {
+  const { t, i18n } = useTranslation("login");
+  const reducedMotion = usePrefersReducedMotion();
+  const current = SUPPORTED_LANGUAGES.includes(i18n.language) ? i18n.language : DEFAULT_LANGUAGE;
+  const greetings = useMemo(
+    () => LANG_OPTIONS.map(({ key }) => ({ lang: key, text: i18n.getFixedT(key, "login")("SetupPage.welcomeTitle") })),
+    [i18n],
+  );
+  const startIndex = Math.max(0, greetings.findIndex((greeting) => greeting.lang === current));
+  const [index, setIndex] = useState(startIndex);
+  const [leaving, setLeaving] = useState(false);
+
+  /* 換了介面語言就從那個語言重新開始輪 */
+  useEffect(() => {
+    setIndex(startIndex);
+    setLeaving(false);
+  }, [startIndex]);
+
+  useEffect(() => {
+    if (reducedMotion) return undefined;
+    const leaveTimer = setTimeout(() => setLeaving(true), WELCOME_HOLD_MS);
+    const nextTimer = setTimeout(() => {
+      setLeaving(false);
+      setIndex((i) => (i + 1) % greetings.length);
+    }, WELCOME_HOLD_MS + WELCOME_FADE_MS);
+    return () => {
+      clearTimeout(leaveTimer);
+      clearTimeout(nextTimer);
+    };
+  }, [index, reducedMotion, greetings.length]);
+
+  const shown = greetings[reducedMotion ? startIndex : index];
+  return (
+    <h1 className={styles.welcomeTitle}>
+      <span className={styles.srOnly}>{t("SetupPage.welcomeTitle")}</span>
+      <span className={styles.welcomeRotator} aria-hidden="true">
+        <span key={shown.lang} lang={shown.lang} className={`${styles.welcomeText} ${leaving ? styles.welcomeLeaving : ""}`}>
+          {shown.text}
+        </span>
+      </span>
+    </h1>
+  );
+}
+
 function LanguageWelcome({ onContinue }) {
   const { t, i18n } = useTranslation("login");
   const current = SUPPORTED_LANGUAGES.includes(i18n.language) ? i18n.language : DEFAULT_LANGUAGE;
   return (
     <div className={styles.welcome}>
-      <h1 className={styles.welcomeTitle}>{t("SetupPage.welcomeTitle")}</h1>
-      <div className={styles.langList} role="radiogroup" aria-label={t("SetupPage.languageLabel")}>
-        {LANG_OPTIONS.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            role="radio"
-            aria-checked={current === option.key}
-            lang={option.key}
-            className={`${styles.langBtn} ${current === option.key ? styles.langBtnActive : ""}`}
-            onClick={() => setLanguage(option.key)}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+      <RotatingWelcome />
+      {/* 互斥選項一律用共用 SegmentedControl；語言名稱用原生寫法，按鈕帶 lang 讓讀屏用對的語音 */}
+      <SegmentedControl
+        className={styles.langSwitch}
+        ariaLabel={t("SetupPage.languageLabel")}
+        value={current}
+        onChange={setLanguage}
+        options={LANG_OPTIONS.map((option) => ({ value: option.key, label: option.label, buttonProps: { lang: option.key } }))}
+      />
       <button type="button" className={styles.btnPrimary} onClick={onContinue}>
         {t("SetupPage.continue")}
         <MIcon name="arrow_forward" size={18} />
@@ -265,7 +308,7 @@ function AdminStep({ alreadyDone, savedEmail, onSaved, onBack, onNext }) {
             {t("SetupPage.back")}
           </button>
           <div className={styles.actionGroup}>
-            <button type="button" className={styles.btnGhost} onClick={() => setEditing(true)}>
+            <button type="button" className={styles.btnSecondary} onClick={() => setEditing(true)}>
               {t("SetupPage.adminReconfigure")}
             </button>
             <button type="button" className={styles.btnPrimary} onClick={onNext}>
@@ -470,7 +513,7 @@ function ProxmoxStep({ alreadyDone, onSaved, onSkip, onBack, onNext }) {
       <p className={styles.sectionDesc}>{t("SetupPage.proxmoxDesc")}</p>
 
       <div className={styles.formGrid}>
-        <label className={styles.field}>
+        <label className={`${styles.field} ${styles.fieldWide}`}>
           <span>{t("SetupPage.hostLabel")} *</span>
           <input
             value={form.host}
@@ -488,6 +531,17 @@ function ProxmoxStep({ alreadyDone, onSaved, onSkip, onBack, onNext }) {
             max={65535}
             value={form.port}
             onChange={(e) => set("port", e.target.value)}
+            disabled={busy}
+          />
+        </label>
+        <label className={styles.field}>
+          <span>{t("SetupPage.apiTimeoutLabel")}</span>
+          <input
+            type="number"
+            min={1}
+            max={300}
+            value={form.api_timeout}
+            onChange={(e) => set("api_timeout", e.target.value)}
             disabled={busy}
           />
         </label>
@@ -510,17 +564,6 @@ function ProxmoxStep({ alreadyDone, onSaved, onSkip, onBack, onNext }) {
             placeholder={t("SetupPage.pvePasswordPlaceholder")}
             disabled={busy}
             required
-          />
-        </label>
-        <label className={styles.field}>
-          <span>{t("SetupPage.apiTimeoutLabel")}</span>
-          <input
-            type="number"
-            min={1}
-            max={300}
-            value={form.api_timeout}
-            onChange={(e) => set("api_timeout", e.target.value)}
-            disabled={busy}
           />
         </label>
       </div>
@@ -662,7 +705,7 @@ function ProxmoxStep({ alreadyDone, onSaved, onSkip, onBack, onNext }) {
           {t("SetupPage.back")}
         </button>
         <div className={styles.actionGroup}>
-          <button type="button" className={styles.btnGhost} onClick={onSkip} disabled={busy}>
+          <button type="button" className={styles.btnSecondary} onClick={onSkip} disabled={busy}>
             {t("SetupPage.skip")}
           </button>
           <button type="submit" className={styles.btnPrimary} disabled={busy || !tested}>
@@ -780,8 +823,14 @@ function SubnetStep({ alreadyDone, onSaved, onSkip, onBack, onNext }) {
         </label>
       </div>
 
+      {/* 進階設定：整行可點的收合列（白底細框、與輸入框同寬），右邊標「選填」與箭頭；展開後兩個欄位並排與上方對齊 */}
       <details className={styles.details}>
-        <summary>{t("SetupPage.advancedToggle")}</summary>
+        <summary>
+          <MIcon name="tune" size={18} />
+          <span className={styles.detailsLabel}>{t("SetupPage.advancedToggle")}</span>
+          <span className={styles.detailsOptional}>{t("SetupPage.advancedOptional")}</span>
+          <MIcon name="expand_more" size={20} className={styles.detailsChevron} />
+        </summary>
         <div className={styles.formGrid}>
           {/* 起—迄是同一個欄位：一個標籤、一組成對控制項 */}
           <div className={styles.field}>
@@ -808,7 +857,7 @@ function SubnetStep({ alreadyDone, onSaved, onSkip, onBack, onNext }) {
               />
             </div>
           </div>
-          <label className={`${styles.field} ${styles.fieldWide}`}>
+          <label className={styles.field}>
             <span>{t("SetupPage.forwardPublicHost")}</span>
             <input
               value={form.forward_public_host}
@@ -828,7 +877,7 @@ function SubnetStep({ alreadyDone, onSaved, onSkip, onBack, onNext }) {
           {t("SetupPage.back")}
         </button>
         <div className={styles.actionGroup}>
-          <button type="button" className={styles.btnGhost} onClick={onSkip} disabled={saving}>
+          <button type="button" className={styles.btnSecondary} onClick={onSkip} disabled={saving}>
             {t("SetupPage.skip")}
           </button>
           <button type="submit" className={styles.btnPrimary} disabled={saving}>
@@ -953,6 +1002,9 @@ export default function SetupPage() {
 
   const goTo = useCallback((next) => setStep(next), []);
 
+  /* 真正進入精靈步驟（不是載入、錯誤、已完成或歡迎畫面）時用寬卡 */
+  const wizard = Boolean(status) && !status.completed && started;
+
   let body;
   if (loading && !status) {
     body = (
@@ -989,7 +1041,20 @@ export default function SetupPage() {
   } else {
     body = (
       <>
-        <Stepper current={step} steps={stepLabels} />
+        {/* 共用步驟列：打勾＝那一步真的設定好了（略過的不打勾）；只能點回走過的步驟 */}
+        <div className={styles.wizardTop}>
+          <Stepper
+            ariaLabel={t("SetupPage.stepsAriaLabel")}
+            steps={STEP_KEYS.map((key, index) => ({
+              key,
+              label: stepLabels[index],
+              done: key !== "finish" && steps[key],
+              disabled: index > step,
+            }))}
+            activeKey={STEP_KEYS[step]}
+            onSelect={(key) => goTo(STEP_KEYS.indexOf(key))}
+          />
+        </div>
         {step === STEP_ADMIN && (
           <AdminStep
             alreadyDone={steps.admin}
@@ -1041,9 +1106,12 @@ export default function SetupPage() {
   }
 
   return (
-    <PageShell>
-      {/* 歡迎畫面自己有大標題，其餘畫面才掛「初始設定」頁首 */}
-      {(started || !status || status.completed) && (
+    <PageShell wide={wizard}>
+      {/* 精靈步驟、載入中、讀取失敗顯示「初始設定」大標；
+         已完成頁的內容本身就說明了狀態，大標只留給螢幕閱讀器；歡迎畫面的歡迎語本身就是 h1 */}
+      {status?.completed ? (
+        <h1 className={styles.srOnly}>{t("SetupPage.title")}</h1>
+      ) : (started || !status) && (
         <header className={styles.header}>
           <h1 className={styles.title}>{t("SetupPage.title")}</h1>
         </header>

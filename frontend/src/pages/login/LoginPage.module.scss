@@ -38,7 +38,8 @@
     left: -12%;
     width: 480px;
     height: 480px;
-    background: color-mix(in srgb, var(--color-primary-light) 26%, transparent);
+    /* 背景黃：原本主色淺階 26% 疊出來偏灰，像一塊髒污（與初始化精靈同一組光暈） */
+    background: color-mix(in srgb, var(--color-bg-gradient-yellow) 85%, transparent);
     animation: orb-drift 32s ease-in-out infinite alternate-reverse;
   }
 

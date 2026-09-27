@@ -39,7 +39,8 @@
     left: -12%;
     width: 480px;
     height: 480px;
-    background: color-mix(in srgb, var(--color-primary-light) 26%, transparent);
+    /* 背景黃：原本主色淺階 26% 疊出來偏灰，像一塊髒污 */
+    background: color-mix(in srgb, var(--color-bg-gradient-yellow) 85%, transparent);
     animation: orb-drift 32s ease-in-out infinite alternate-reverse;
   }
 
@@ -62,10 +63,12 @@
   }
 }
 
+/* 預設窄卡（歡迎、已完成、載入、錯誤），精靈步驟切成寬卡；寬度變化帶過場 */
 .card {
   position: relative;
   width: 100%;
-  max-width: 760px;
+  max-width: 480px;
+  transition: max-width $transition-slow;
   @include glass-surface;
   border-radius: $radius-16;
   padding: $spacing-24 $spacing-16;
@@ -74,6 +77,10 @@
   @include respond-to(sm) {
     padding: $spacing-32;
   }
+}
+
+.cardWide {
+  max-width: 760px;
 }
 
 @keyframes slideUp {
@@ -87,7 +94,7 @@
   }
 }
 
-/* 右上角的主題鈕；歡迎畫面與各步驟都在 */
+/* 右上角的主題鈕；每個畫面都在 */
 .themeToggle {
   @include btn-icon-secondary;
   position: absolute;
@@ -95,101 +102,29 @@
   right: $spacing-16;
 }
 
+/* 「初始設定」大標：精靈步驟、載入中、讀取失敗顯示；已完成頁不顯示 */
 .header {
-  text-align: center;
   margin-bottom: $spacing-24;
+  text-align: center;
 }
 
 .title {
+  margin-bottom: $spacing-4;
+  color: var(--color-text-primary);
   font-size: $font-size-24;
   font-weight: $font-weight-700;
   letter-spacing: 0.5px;
-  color: var(--color-text-primary);
-  margin-bottom: $spacing-4;
 
   @include respond-to(sm) {
     font-size: $font-size-28;
   }
 }
 
-/* ── 步驟列 ── */
-.stepper {
-  display: flex;
-  justify-content: space-between;
-  gap: $spacing-4;
-  list-style: none;
-  margin: 0 0 $spacing-24;
-  padding: 0;
-}
-
-.step {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  gap: $spacing-4;
-  min-width: 0;
-  position: relative;
-  color: var(--color-text-muted);
-  font-size: $font-size-12;
-
-  /* 步驟之間的連接線 */
-  &:not(:last-child)::after {
-    content: "";
-    position: absolute;
-    top: 14px;
-    left: calc(50% + 18px);
-    width: calc(100% - 36px);
-    height: 2px;
-    background: var(--color-border);
-  }
-
-  @include respond-to(sm) {
-    font-size: $font-size-14;
-  }
-}
-
-.stepIndex {
-  @include flex-center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 2px solid var(--color-border);
-  background: var(--color-surface);
-  font-size: $font-size-12;
-  font-weight: $font-weight-700;
-  z-index: 1;
-  transition: background $transition-base, border-color $transition-base, color $transition-base;
-}
-
-.stepLabel {
-  @include text-truncate;
-  max-width: 100%;
-}
-
-.step_active {
-  color: var(--color-primary);
-  font-weight: $font-weight-500;
-
-  .stepIndex {
-    border-color: var(--color-primary);
-    background: var(--color-primary);
-    color: var(--color-text-on-primary);
-  }
-}
-
-.step_done {
-  color: var(--color-text-secondary);
-
-  .stepIndex {
-    border-color: var(--color-success);
-    background: color-mix(in srgb, var(--color-success) 14%, var(--color-surface));
-    color: var(--color-success);
-  }
-
-  &:not(:last-child)::after {
-    background: var(--color-success);
-  }
+/* ── 步驟列：共用 Stepper，分隔線切開下方內容 ── */
+.wizardTop {
+  margin-bottom: $spacing-24;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--color-divider);
 }
 
 /* ── 內容區 ── */
@@ -252,35 +187,84 @@
   }
 }
 
-.langList {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: $spacing-8;
+/* 歡迎語輪播：保留一行高度，換句時不推動下方的語言鈕；
+   進場由下往上浮現、離場往上淡出，減少動態效果時不播 */
+.welcomeRotator {
+  display: inline-block;
+  min-height: 1.3em;
 }
 
-.langBtn {
-  @include btn-secondary;
-  min-width: 120px;
+.welcomeText {
+  display: inline-block;
+  animation: welcome-in 0.4s cubic-bezier(0.25, 0.8, 0.25, 1) both;
 }
 
-/* 選中的語言：藍框只留給「目前」狀態 */
-.langBtnActive {
-  border-color: var(--color-primary);
-  color: var(--color-primary-on-surface);
-  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface));
+.welcomeLeaving {
+  animation: welcome-out 0.4s ease both;
+}
 
-  &:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface));
+@keyframes welcome-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.35em);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
   }
 }
 
+@keyframes welcome-out {
+  from {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-0.35em);
+    filter: blur(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcomeText,
+  .welcomeLeaving {
+    animation: none;
+  }
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* 語言切換：共用 SegmentedControl，比照登入頁的登入方式切換放大到 14px；
+   雙類名壓過元件自身的 .segment（bundle 順序不定） */
+.langSwitch.langSwitch {
+  max-width: 100%;
+  overflow-x: auto;
+
+  > button {
+    justify-content: center;
+    min-width: 104px;
+    padding-block: $spacing-8;
+    font-size: $font-size-14;
+  }
+}
+
+/* 提示框只靠淡底色區分，不加外框線 */
 .notice {
   display: flex;
   align-items: flex-start;
   gap: $spacing-8;
   padding: $spacing-8 $spacing-16;
-  border: 1px solid var(--color-border);
   border-radius: $radius-8;
   font-size: $font-size-14;
   line-height: 1.5;
@@ -293,7 +277,6 @@
 }
 
 .notice_info {
-  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
   background: color-mix(in srgb, var(--color-primary) 8%, transparent);
 
   > span:first-child {
@@ -302,7 +285,6 @@
 }
 
 .notice_success {
-  border-color: color-mix(in srgb, var(--color-success) 30%, var(--color-border));
   background: color-mix(in srgb, var(--color-success) 8%, transparent);
 
   > span:first-child {
@@ -343,6 +325,12 @@
   textarea {
     font-family: monospace;
   }
+}
+
+/* 共用 form-field 會對「所有直接子層 span」加標籤用的下邊距，本意只有第一個（標籤文字）；
+   密碼元件（PasswordInput）的外層也是 span，會被多套 3px，這裡清掉 */
+.field > span:not(:first-child) {
+  margin-bottom: 0;
 }
 
 .fieldWide {
@@ -387,20 +375,71 @@
   }
 }
 
+/* 進階設定：整行可點的收合列，看起來就是個控制項——白底細框、與輸入框同寬，
+   hover 換淡底；左邊圖示＋標題，右邊「選填」與箭頭（展開時翻轉）。內容欄位與上方欄位對齊 */
 .details {
-  border: 1px solid var(--color-border);
-  border-radius: $radius-8;
-  padding: $spacing-8 $spacing-16;
-
   summary {
-    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: $spacing-8;
+    min-height: 40px;
+    padding: $spacing-8 12px;
+    border: 1px solid var(--color-border);
+    border-radius: $radius-8;
+    color: var(--color-text-primary);
+    background: var(--color-surface);
     font-size: $font-size-14;
     font-weight: $font-weight-500;
-    color: var(--color-text-secondary);
+    list-style: none;
+    cursor: pointer;
+    transition: background $transition-base;
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+
+    &:hover {
+      background: var(--color-hover);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--color-primary-on-surface);
+      outline-offset: 2px;
+    }
+
+    > :global(.material-icons-outlined):first-child {
+      color: var(--color-primary);
+    }
   }
 
   .formGrid {
     margin-top: $spacing-16;
+  }
+}
+
+.detailsLabel {
+  flex: 1;
+  min-width: 0;
+}
+
+.detailsOptional {
+  color: var(--color-text-muted);
+  font-size: $font-size-12;
+  font-weight: $font-weight-400;
+}
+
+.detailsChevron {
+  color: var(--color-text-secondary);
+  transition: transform $transition-base;
+}
+
+.details[open] .detailsChevron {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detailsChevron {
+    transition: none;
   }
 }
 
@@ -520,7 +559,7 @@
   color: var(--color-text-muted);
 }
 
-/* ── 動作列 ── */
+/* ── 動作列：分隔線與表單內容切開，上一步在左、主要動作在右 ── */
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -528,6 +567,8 @@
   align-items: center;
   gap: $spacing-8;
   margin-top: $spacing-8;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-divider);
 }
 
 .actionGroup {
@@ -545,6 +586,14 @@
   @include btn-secondary;
 }
 
-.btnGhost {
-  @include btn-ghost;
+/* 系統要求減少動態效果：背景光暈停住，卡片進場與寬度過場也不播 */
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .glow span {
+    animation: none;
+  }
+
+  .card {
+    transition: none;
+  }
 }
