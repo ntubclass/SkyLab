@@ -369,11 +369,7 @@ export default function OnboardingPage() {
 
   return (
     <div className={shell.page}>
-      <div className={shell.glow} aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
+      {/* 背景不疊光暈色球，直接露出全站主題背景（同登入頁、服務檢查、系統內頁） */}
       {/* 歡迎畫面用窄卡，進入步驟後用寬卡（同初始化精靈） */}
       <div className={`${shell.card} ${styles.cardWithSkip} ${started ? shell.cardWide : ""}`}>
         <button

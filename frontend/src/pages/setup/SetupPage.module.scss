@@ -1,4 +1,4 @@
-/* 初始化精靈：沿用登入頁的暈染背景 + 毛玻璃卡片，但卡片放寬給表單用 */
+/* 初始化精靈：沿用登入頁的毛玻璃卡片（背景同樣只用全站主題背景、不疊光暈），但卡片放寬給表單用 */
 
 /* 卡片在各種寬度都垂直置中；內容比螢幕高時 min-height 讓頁面自然往下長，不會被切掉 */
 .page {
@@ -9,56 +9,6 @@
 
   @include respond-to(sm) {
     padding: $spacing-32;
-  }
-}
-
-.glow {
-  position: fixed;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-
-  span {
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(72px);
-  }
-
-  span:nth-child(1) {
-    top: -18%;
-    right: -10%;
-    width: 560px;
-    height: 560px;
-    background: color-mix(in srgb, var(--color-primary) 32%, transparent);
-    animation: orb-drift 26s ease-in-out infinite alternate;
-  }
-
-  span:nth-child(2) {
-    bottom: -22%;
-    left: -12%;
-    width: 480px;
-    height: 480px;
-    /* 背景黃：原本主色淺階 26% 疊出來偏灰，像一塊髒污 */
-    background: color-mix(in srgb, var(--color-bg-gradient-yellow) 85%, transparent);
-    animation: orb-drift 32s ease-in-out infinite alternate-reverse;
-  }
-
-  span:nth-child(3) {
-    right: 8%;
-    bottom: -6%;
-    width: 360px;
-    height: 360px;
-    background: color-mix(in srgb, var(--color-bg-gradient-green) 85%, transparent);
-    animation: orb-drift 22s ease-in-out infinite alternate;
-  }
-}
-
-@keyframes orb-drift {
-  from {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  to {
-    transform: translate3d(-48px, 32px, 0) scale(1.06);
   }
 }
 
@@ -538,10 +488,9 @@
   @include btn-secondary;
 }
 
-/* 系統要求減少動態效果：背景光暈停住，卡片進場與寬度過場也不播 */
+/* 系統要求減少動態效果：卡片進場與寬度過場不播 */
 @media (prefers-reduced-motion: reduce) {
-  .card,
-  .glow span {
+  .card {
     animation: none;
   }
 

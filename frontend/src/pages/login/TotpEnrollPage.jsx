@@ -21,11 +21,7 @@ export default function TotpEnrollPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.glow} aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
+      {/* 背景同登入頁：不疊光暈，直接露出全站主題背景 */}
       <div className={`${styles.card} ${styles.cardWide}`}>
         <button type="button" className={styles.backBtn} onClick={logout}>
           <MIcon name="logout" size={18} />

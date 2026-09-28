@@ -71,15 +71,11 @@ function clearDeviceCodeFromUrl() {
 
 /* ─── 共用元件 ─────────────────────────────────────────── */
 
-/* 頁面外框：三色暈染上的光暈層 + 毛玻璃卡片，各 view 共用 */
+/* 頁面外框：毛玻璃卡片，各 view 共用。背景不另疊光暈色球，直接露出全站主題背景（body::before），
+   跟服務檢查頁、系統內頁同一套，登入一路進到系統背景都不換 */
 function PageShell({ children }) {
   return (
     <div className={styles.page}>
-      <div className={styles.glow} aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
       <div className={styles.card}>{children}</div>
     </div>
   );

@@ -122,15 +122,11 @@ function ThemeToggle() {
   );
 }
 
-/* 卡片寬度跟著內容走：精靈表單用寬卡；歡迎、已完成、載入、錯誤這類內容少的畫面用窄卡 */
+/* 卡片寬度跟著內容走：精靈表單用寬卡；歡迎、已完成、載入、錯誤這類內容少的畫面用窄卡。
+   背景不疊光暈色球，直接露出全站主題背景（同登入頁、系統內頁） */
 function PageShell({ wide = false, children }) {
   return (
     <div className={styles.page}>
-      <div className={styles.glow} aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
       <div className={`${styles.card} ${wide ? styles.cardWide : ""}`}>
         <ThemeToggle />
         {children}
