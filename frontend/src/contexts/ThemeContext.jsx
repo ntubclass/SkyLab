@@ -71,13 +71,16 @@ function paletteToCss(p) {
     `--color-bg-base: ${p.bgBase};`,
     `--color-info: ${p.primary};`,
     `--color-flow-bg: ${p.flowBg};`,
+    // 淺色模式才有陰影色（深色模式陰影是黑色）
+    p.shadow ? `--shadow-color: ${p.shadow};` : "",
+    p.shadowDeep ? `--shadow-color-deep: ${p.shadowDeep};` : "",
   ].join(" ");
 }
 
 /**
  * 非預設主色時注入 <style>，讓整個介面帶主色色調的用色一起換：
  * primary 色階、文字、hover、邊框、分隔線、頁面底色、info、
- * 流程畫布底（狀態語意色 綠/黃/紅 與白黑基底不動）：
+ * 流程畫布底、淺色模式的陰影色調（狀態語意色 綠/黃/紅 與白黑基底不動）：
  * - body:      淺色模式配色
  * - body.dark: 深色模式配色（高亮度、帶主色色調的文字）
  * 預設主色則移除 <style>，讓 _themes.scss 的原始配色生效。

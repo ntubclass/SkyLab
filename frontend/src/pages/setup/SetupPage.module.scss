@@ -1,14 +1,13 @@
 /* 初始化精靈：沿用登入頁的暈染背景 + 毛玻璃卡片，但卡片放寬給表單用 */
 
+/* 卡片在各種寬度都垂直置中；內容比螢幕高時 min-height 讓頁面自然往下長，不會被切掉 */
 .page {
   @include flex-center;
-  align-items: flex-start;
   min-height: 100vh;
   min-height: 100dvh;
   padding: $spacing-16;
 
   @include respond-to(sm) {
-    align-items: center;
     padding: $spacing-32;
   }
 }
@@ -184,55 +183,6 @@
 
   @include respond-to(sm) {
     font-size: $font-size-32;
-  }
-}
-
-/* 歡迎語輪播：保留一行高度，換句時不推動下方的語言鈕；
-   進場由下往上浮現、離場往上淡出，減少動態效果時不播 */
-.welcomeRotator {
-  display: inline-block;
-  min-height: 1.3em;
-}
-
-.welcomeText {
-  display: inline-block;
-  animation: welcome-in 0.4s cubic-bezier(0.25, 0.8, 0.25, 1) both;
-}
-
-.welcomeLeaving {
-  animation: welcome-out 0.4s ease both;
-}
-
-@keyframes welcome-in {
-  from {
-    opacity: 0;
-    transform: translateY(0.35em);
-    filter: blur(4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-    filter: none;
-  }
-}
-
-@keyframes welcome-out {
-  from {
-    opacity: 1;
-    transform: none;
-    filter: none;
-  }
-  to {
-    opacity: 0;
-    transform: translateY(-0.35em);
-    filter: blur(4px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .welcomeText,
-  .welcomeLeaving {
-    animation: none;
   }
 }
 
@@ -560,11 +510,13 @@
 }
 
 /* ── 動作列：分隔線與表單內容切開，上一步在左、主要動作在右 ── */
+/* 同列按鈕拉成一樣高：主要鈕（無框）比次要鈕（1px 框）矮 2px，
+   stretch 讓「上一步／下一步」這類混搭的一列等高 */
 .actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  align-items: center;
+  align-items: stretch;
   gap: $spacing-8;
   margin-top: $spacing-8;
   padding-top: 20px;

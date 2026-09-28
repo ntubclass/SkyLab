@@ -12,6 +12,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import MIcon from "../../components/MIcon";
 import PasswordInput from "../../components/PasswordInput/PasswordInput";
+import RotatingWelcome from "../../components/RotatingWelcome/RotatingWelcome";
 import SegmentedControl from "../../components/SegmentedControl/SegmentedControl";
 import Stepper from "../../components/Stepper/Stepper";
 import { LoadingSpinner } from "../../components/LoadingState/LoadingState";
@@ -170,76 +171,12 @@ function DoneStep({ title, notice, onBack, onNext }) {
 
 /* ─── 歡迎：選語言 ───────────────────────────────────────── */
 
-/* 系統設定「減少動態效果」時為 true，設定變動會即時跟上 */
-function usePrefersReducedMotion() {
-  const query = "(prefers-reduced-motion: reduce)";
-  const [reduced, setReduced] = useState(() => typeof window !== "undefined" && Boolean(window.matchMedia?.(query).matches));
-  useEffect(() => {
-    const mq = window.matchMedia?.(query);
-    if (!mq) return undefined;
-    const onChange = () => setReduced(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-  return reduced;
-}
-
-const WELCOME_HOLD_MS = 2100;
-const WELCOME_FADE_MS = 400;
-
-/* 歡迎語輪流用三種語言顯示（還沒選語言的人也看得懂）。
-   離場動畫只在換句前一刻才播，分頁在背景被節流時文字仍停在畫面上，不會變空白；
-   螢幕閱讀器只讀目前介面語言那一句；系統要求減少動態時停在目前語言、不輪播 */
-function RotatingWelcome() {
-  const { t, i18n } = useTranslation("login");
-  const reducedMotion = usePrefersReducedMotion();
-  const current = SUPPORTED_LANGUAGES.includes(i18n.language) ? i18n.language : DEFAULT_LANGUAGE;
-  const greetings = useMemo(
-    () => LANG_OPTIONS.map(({ key }) => ({ lang: key, text: i18n.getFixedT(key, "login")("SetupPage.welcomeTitle") })),
-    [i18n],
-  );
-  const startIndex = Math.max(0, greetings.findIndex((greeting) => greeting.lang === current));
-  const [index, setIndex] = useState(startIndex);
-  const [leaving, setLeaving] = useState(false);
-
-  /* 換了介面語言就從那個語言重新開始輪 */
-  useEffect(() => {
-    setIndex(startIndex);
-    setLeaving(false);
-  }, [startIndex]);
-
-  useEffect(() => {
-    if (reducedMotion) return undefined;
-    const leaveTimer = setTimeout(() => setLeaving(true), WELCOME_HOLD_MS);
-    const nextTimer = setTimeout(() => {
-      setLeaving(false);
-      setIndex((i) => (i + 1) % greetings.length);
-    }, WELCOME_HOLD_MS + WELCOME_FADE_MS);
-    return () => {
-      clearTimeout(leaveTimer);
-      clearTimeout(nextTimer);
-    };
-  }, [index, reducedMotion, greetings.length]);
-
-  const shown = greetings[reducedMotion ? startIndex : index];
-  return (
-    <h1 className={styles.welcomeTitle}>
-      <span className={styles.srOnly}>{t("SetupPage.welcomeTitle")}</span>
-      <span className={styles.welcomeRotator} aria-hidden="true">
-        <span key={shown.lang} lang={shown.lang} className={`${styles.welcomeText} ${leaving ? styles.welcomeLeaving : ""}`}>
-          {shown.text}
-        </span>
-      </span>
-    </h1>
-  );
-}
-
 function LanguageWelcome({ onContinue }) {
   const { t, i18n } = useTranslation("login");
   const current = SUPPORTED_LANGUAGES.includes(i18n.language) ? i18n.language : DEFAULT_LANGUAGE;
   return (
     <div className={styles.welcome}>
-      <RotatingWelcome />
+      <RotatingWelcome className={styles.welcomeTitle} i18nKey="SetupPage.welcomeTitle" />
       {/* 互斥選項一律用共用 SegmentedControl；語言名稱用原生寫法，按鈕帶 lang 讓讀屏用對的語音 */}
       <SegmentedControl
         className={styles.langSwitch}

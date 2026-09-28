@@ -127,7 +127,11 @@ export function derivePrimaryTheme(hex) {
       divider: tone(45, 96),
       bgBase: tone(85, 95),
       flowBg: `color-mix(in srgb, ${tone(60, 84)} 32%, transparent)`,
+      // 陰影色：預設主色時分別約為 #435a95 / #1f2c5a（_themes.scss 原本寫死的兩個深藍）
+      shadow: tone(38, 42),
+      shadowDeep: tone(49, 24),
     },
+    // 深色模式的陰影是黑色，不帶主色色調
     dark: {
       ...shades,
       text: hslToHex(h, Math.min(s, 46), 88),

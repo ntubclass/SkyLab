@@ -11,6 +11,10 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import MIcon from "../../components/MIcon";
+import RotatingWelcome from "../../components/RotatingWelcome/RotatingWelcome";
+import { AppearanceQuickSettings } from "../personal/account/AppearanceSettings";
+import SegmentedControl from "../../components/SegmentedControl/SegmentedControl";
+import Stepper from "../../components/Stepper/Stepper";
 import TotpEnrollment from "../../components/TotpEnrollment/TotpEnrollment";
 import { useAuth } from "../../contexts/AuthContext";
 import { THEME_DEFAULTS, useTheme } from "../../contexts/ThemeContext";
@@ -23,6 +27,7 @@ import styles from "./OnboardingPage.module.scss";
 const STEP_APPEARANCE = 0;
 const STEP_TOTP = 1;
 const STEP_FINISH = 2;
+const STEP_KEYS = ["appearance", "totp", "finish"];
 
 /* 語言用原生名稱顯示，不翻譯 */
 const LANG_OPTIONS = [
@@ -44,28 +49,6 @@ function useCurrentLanguage() {
 
 /* ─── 外框（與初始化精靈同一套樣式） ─────────────────────── */
 
-function Stepper({ current, steps }) {
-  return (
-    <ol className={shell.stepper} aria-label="steps">
-      {steps.map((label, index) => {
-        const state = index < current ? "done" : index === current ? "active" : "todo";
-        return (
-          <li
-            key={label}
-            className={`${shell.step} ${shell[`step_${state}`]}`}
-            aria-current={state === "active" ? "step" : undefined}
-          >
-            <span className={shell.stepIndex}>
-              {state === "done" ? <MIcon name="check" size={16} /> : index + 1}
-            </span>
-            <span className={shell.stepLabel}>{label}</span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
 function Notice({ icon = "info", tone = "info", children }) {
   return (
     <div className={`${shell.notice} ${shell[`notice_${tone}`]}`}>
@@ -82,23 +65,16 @@ function LanguageWelcome({ onContinue }) {
   const current = useCurrentLanguage();
   return (
     <div className={shell.welcome}>
-      <h1 className={shell.welcomeTitle}>{t("OnboardingPage.welcomeTitle")}</h1>
+      <RotatingWelcome className={shell.welcomeTitle} i18nKey="OnboardingPage.welcomeTitle" />
       <p className={styles.welcomeHint}>{t("OnboardingPage.welcomeHint")}</p>
-      <div className={shell.langList} role="radiogroup" aria-label={t("OnboardingPage.languageLabel")}>
-        {LANG_OPTIONS.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            role="radio"
-            aria-checked={current === option.key}
-            lang={option.key}
-            className={`${shell.langBtn} ${current === option.key ? shell.langBtnActive : ""}`}
-            onClick={() => setLanguage(option.key)}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+      {/* 互斥選項一律用共用 SegmentedControl；語言名稱用原生寫法，按鈕帶 lang 讓讀屏用對的語音 */}
+      <SegmentedControl
+        className={shell.langSwitch}
+        ariaLabel={t("OnboardingPage.languageLabel")}
+        value={current}
+        onChange={setLanguage}
+        options={LANG_OPTIONS.map((option) => ({ value: option.key, label: option.label, buttonProps: { lang: option.key } }))}
+      />
       <button type="button" className={shell.btnPrimary} onClick={onContinue}>
         {t("OnboardingPage.continue")}
         <MIcon name="arrow_forward" size={18} />
@@ -111,55 +87,14 @@ function LanguageWelcome({ onContinue }) {
 
 function AppearanceStep({ onBack, onNext }) {
   const { t } = useTranslation("login");
-  const { mode, setMode, primaryColor, setPrimaryColor } = useTheme();
-  const isDefaultColor = primaryColor.toLowerCase() === THEME_DEFAULTS.primaryColor;
 
   return (
     <section className={shell.section}>
       <h2 className={shell.sectionTitle}>{t("OnboardingPage.appearanceTitle")}</h2>
 
-      <div className={styles.fieldBlock}>
-        <span>{t("OnboardingPage.modeLabel")}</span>
-        <div className={styles.modeGrid} role="radiogroup" aria-label={t("OnboardingPage.modeLabel")}>
-          {MODE_OPTIONS.map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              role="radio"
-              aria-checked={mode === option.key}
-              className={`${styles.modeCard} ${mode === option.key ? styles.modeCardActive : ""}`}
-              onClick={() => setMode(option.key)}
-            >
-              <MIcon name={option.icon} size={28} />
-              <span>{t(option.labelKey)}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className={styles.fieldBlock}>
-        <span>{t("OnboardingPage.primaryColorLabel")}</span>
-        <div className={styles.colorRow}>
-          <input
-            type="color"
-            className={styles.colorInput}
-            value={primaryColor}
-            onChange={(e) => setPrimaryColor(e.target.value)}
-            aria-label={t("OnboardingPage.primaryColorPick")}
-          />
-          <code className={shell.code}>{primaryColor}</code>
-          {!isDefaultColor && (
-            <button
-              type="button"
-              className={shell.btnGhost}
-              onClick={() => setPrimaryColor(THEME_DEFAULTS.primaryColor)}
-            >
-              <MIcon name="restart_alt" size={16} />
-              {t("OnboardingPage.resetPrimary")}
-            </button>
-          )}
-        </div>
-      </div>
+      {/* 選法以系統內為主：沿用帳號設定的配色主題與介面（風格、明暗模式）元件；
+         主色、背景色、背景花色、上傳圖片等細調先不放，留到帳號設定再調 */}
+      <AppearanceQuickSettings />
 
       <div className={shell.actions}>
         <button type="button" className={shell.btnSecondary} onClick={onBack}>
@@ -223,7 +158,7 @@ function TotpStep({ onBack, onNext }) {
               </button>
             ) : (
               <>
-                <button type="button" className={shell.btnGhost} onClick={onNext}>
+                <button type="button" className={shell.btnSecondary} onClick={onNext}>
                   {t("OnboardingPage.skipStep")}
                 </button>
                 <button type="button" className={shell.btnPrimary} onClick={() => setEnrolling(true)}>
@@ -295,7 +230,7 @@ function FinishStep({ onBack, onComplete, completing }) {
 
 export default function OnboardingPage() {
   const { t } = useTranslation("login");
-  const { updateUser } = useAuth();
+  const { user, updateUser } = useAuth();
   const toast = useToast();
   const [started, setStarted] = useState(false);
   const [step, setStep] = useState(STEP_APPEARANCE);
@@ -327,7 +262,8 @@ export default function OnboardingPage() {
         <span />
         <span />
       </div>
-      <div className={shell.card}>
+      {/* 歡迎畫面用窄卡，進入步驟後用寬卡（同初始化精靈） */}
+      <div className={`${shell.card} ${styles.cardWithSkip} ${started ? shell.cardWide : ""}`}>
         <button
           type="button"
           className={styles.skipBtn}
@@ -335,7 +271,6 @@ export default function OnboardingPage() {
           disabled={completing}
         >
           {t("OnboardingPage.skip")}
-          <MIcon name="close" size={16} />
         </button>
 
         {started ? (
@@ -343,7 +278,20 @@ export default function OnboardingPage() {
             <header className={shell.header}>
               <h1 className={shell.title}>{t("OnboardingPage.title")}</h1>
             </header>
-            <Stepper current={step} steps={stepLabels} />
+            {/* 共用步驟列：外觀走過就算設好；兩步驟驗證要真的綁定才打勾；只能點回走過的步驟 */}
+            <div className={shell.wizardTop}>
+              <Stepper
+                ariaLabel={t("OnboardingPage.stepsAriaLabel")}
+                steps={STEP_KEYS.map((key, index) => ({
+                  key,
+                  label: stepLabels[index],
+                  done: key === "appearance" ? step > STEP_APPEARANCE : key === "totp" ? Boolean(user?.totp_enabled) : false,
+                  disabled: index > step,
+                }))}
+                activeKey={STEP_KEYS[step]}
+                onSelect={(key) => setStep(STEP_KEYS.indexOf(key))}
+              />
+            </div>
             {step === STEP_APPEARANCE && (
               <AppearanceStep
                 onBack={() => setStarted(false)}
