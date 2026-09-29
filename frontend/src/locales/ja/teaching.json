@@ -221,6 +221,7 @@
   "CourseTemplateManagementPage.thProvideMode": "提供方法",
   "CourseTemplateManagementPage.thUsingClasses": "使用中のクラス",
   "CourseTemplateManagementPage.thStatus": "ステータス",
+  "CourseTemplateManagementPage.thActions": "操作",
   "CourseTemplateManagementPage.machinesPerStudentUnit": "{{count}} 台／学生",
   "CourseTemplateManagementPage.resourceSummary": "{{cpu}} CPU ・{{memory}} GB RAM",
   "CourseTemplateManagementPage.classesCount": "{{count}} クラス",

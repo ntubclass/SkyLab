@@ -221,6 +221,7 @@
   "CourseTemplateManagementPage.thProvideMode": "Availability",
   "CourseTemplateManagementPage.thUsingClasses": "Classes using it",
   "CourseTemplateManagementPage.thStatus": "Status",
+  "CourseTemplateManagementPage.thActions": "Actions",
   "CourseTemplateManagementPage.machinesPerStudentUnit": "{{count}} machines/student",
   "CourseTemplateManagementPage.resourceSummary": "{{cpu}} CPU · {{memory}} GB RAM",
   "CourseTemplateManagementPage.classesCount": "{{count}} classes",

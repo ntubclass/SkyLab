@@ -221,6 +221,7 @@
   "CourseTemplateManagementPage.thProvideMode": "提供方式",
   "CourseTemplateManagementPage.thUsingClasses": "使用班級",
   "CourseTemplateManagementPage.thStatus": "狀態",
+  "CourseTemplateManagementPage.thActions": "操作",
   "CourseTemplateManagementPage.machinesPerStudentUnit": "{{count}} 台／每位學生",
   "CourseTemplateManagementPage.resourceSummary": "{{cpu}} CPU · {{memory}} GB RAM",
   "CourseTemplateManagementPage.classesCount": "{{count}} 個班級",
