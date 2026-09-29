@@ -74,6 +74,15 @@
   --color-terminal-warn:     #f5a524;
   --color-terminal-danger:   #ff7a7a;
 
+  /* ----- Code sample（AI API 範例程式碼、聊天回覆裡的程式碼區塊）-----
+     比照 VS Code 深色編輯器（Monaco vs-dark），亮暗兩個主題都是深底，所以不在 body.dark 覆寫 */
+  --color-code-bg:     #1e1e1e;
+  --color-code-header: #252526;
+  --color-code-border: #353c46;
+  --color-code-hover:  #353c46;
+  --color-code-text:   #d4d4d4;
+  --color-code-muted:  #bfc7d5;
+
   /* ----- Quick-practice folder（快速練習資料夾，QuickTemplateFolder）-----
      前蓋上的小字是白字，淺端 #5a74bf 對白字約 4.5:1。
      這裡是預設主色的值；換主色時 ThemeContext 依主色色相改寫（deriveDeepPalette） */
