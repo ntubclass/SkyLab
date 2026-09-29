@@ -608,9 +608,12 @@ def test_student_projection_hides_validation_error_in_legacy_judgement_summary()
         "checks.0.raw\n"
         "  Input should be a valid string [type=string_type, input_value={}, input_type=dict]"
     )
+    student_id = uuid.uuid4()
+    # 舊資料相容路徑：學生自己發起、只有一個沒帶 user 快照的 target
     run = TeacherJudgeScriptRun(
         teaching_class_id=uuid.uuid4(),
         status=TeacherJudgeScriptRunStatus.completed,
+        started_by=student_id,
         target_results_json={
             "schema_version": "teacher_judge_run_results.v1",
             "targets": [
@@ -631,7 +634,7 @@ def test_student_projection_hides_validation_error_in_legacy_judgement_summary()
         },
     )
 
-    check = ai_assignment_service._check_to_student(run)
+    check = ai_assignment_service._check_to_student(run, user_id=student_id)
 
     assert check.summary == ""
     assert check.error == t("course.ai_check_incomplete")
