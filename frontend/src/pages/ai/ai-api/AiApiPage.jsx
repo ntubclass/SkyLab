@@ -18,8 +18,10 @@ import PageHeader from "../../../components/PageHeader/PageHeader";
 import RrdChart from "../../../components/RrdChart/RrdChart";
 import { formatDate, formatDateTime, formatMonthDay } from "../../../utils/formatDate";
 import useAnchoredMenu from "../../../hooks/useAnchoredMenu";
+import { formatModelDisplay, formatTokens, isOkStatus, presetToRange } from "../aiFormat";
 
 const ReadOnlyCode = lazy(() => import("../../../components/ReadOnlyCode/ReadOnlyCode"));
+const AiApiChatTab = lazy(() => import("./AiApiChatTab"));
 
 /* ── helpers ── */
 
@@ -33,11 +35,18 @@ function maskPrefix(prefix) {
   return `${prefix ?? ""}••••••`;
 }
 
-function formatTokens(n) {
-  if (n == null) return "—";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
+/* 複製到剪貼簿並以 toast 回報結果；label 是訊息裡顯示的項目名稱 */
+function useCopyToClipboard() {
+  const { t } = useTranslation("ai");
+  const toast = useToast();
+  return useCallback(async (label, value) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(t("AiApiPage.copiedSuccess", { label }));
+    } catch {
+      toast.error(t("AiApiPage.copiedError", { label }));
+    }
+  }, [t, toast]);
 }
 
 export function buildAiProxyBaseUrl(baseUrl) {
@@ -95,17 +104,6 @@ print(response.output_text)`;
       '  -H "Content-Type: application/json" \\',
       `  -d '${body}'`,
     ].join("\n");
-  }
-
-  if (language === "cmd") {
-    /* CMD 的 JSON 內層引號要寫成 \"，模板字串裡就得是 \\" */
-    const body = chat
-      ? `{\\"model\\":\\"MODEL_NAME\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"INPUT\\"}]}`
-      : `{\\"model\\":\\"MODEL_NAME\\",\\"input\\":\\"INPUT\\"}`;
-    return `curl -X POST "${url}" ^
-  -H "Authorization: Bearer YOUR_API_KEY" ^
-  -H "Content-Type: application/json" ^
-  -d "${body}"`;
   }
 
   return chat
@@ -188,20 +186,6 @@ function EmptyState({ icon, title, description, action, guideId }) {
   );
 }
 
-/* 複製到剪貼簿並用 toast 回報；label 用名詞（「API Key 已複製」），不要拿按鈕文字組句子 */
-function useCopy() {
-  const { t } = useTranslation("ai");
-  const toast = useToast();
-  return useCallback(async (label, value) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      toast.success(t("AiApiPage.copiedSuccess", { label }));
-    } catch {
-      toast.error(t("AiApiPage.copiedError", { label }));
-    }
-  }, [t, toast]);
-}
-
 
 /* ── Credential 列的「⋮」操作選單 ──
    portal 到 body 並用 fixed 定位，做法同範本管理頁的 RowMenu */
@@ -262,7 +246,7 @@ function KeyMenu({ state, busy, onRename, onRotate, onDelete, onClose, anchorRef
    外框交給共用 Modal（Esc、焦點、Tab 鎖定、捲動鎖都由它處理） */
 function KeyDetailDialog({ credential, apiKey, state, closing = false, onClose }) {
   const { t } = useTranslation("ai");
-  const copy = useCopy();
+  const copy = useCopyToClipboard();
   const usable = state === "active";
   const [loadedKey, setLoadedKey] = useState(apiKey || "");
   const [keyLoading, setKeyLoading] = useState(!apiKey && usable);
@@ -564,7 +548,7 @@ function CredentialRow({ item, state, onRefresh, onShowDetails, onRotated }) {
 function ApiDocsContent({ credentials, publicBaseUrl }) {
   const { t } = useTranslation("ai");
   const toast = useToast();
-  const copy = useCopy();
+  const copy = useCopyToClipboard();
   const [language, setLanguage] = useState("javascript");
   const [endpointKind, setEndpointKind] = useState("responses");
   const [copyingKey, setCopyingKey] = useState(false);
@@ -840,27 +824,22 @@ function UsageBreakdown({ entries, formatter }) {
   );
 }
 
-function formatModelDisplay(modelName) {
-  if (!modelName) return "-";
-  const trimmed = modelName.trim();
-  if (!trimmed) return "-";
-  const match = trimmed.match(/models--([^/]+)--([^/]+)/);
-  if (!match) return trimmed;
-  return `${match[1]}/${match[2]}`;
-}
+/* call_type 來自 AI 代理記錄的 request_type（backend services/llm_gateway/relay_service.GENERATION_ENDPOINTS）；
+   沒列到的型別（completion、response…）直接顯示原字串。只放 locale 裡
+   確實存在的 key，否則畫面會露出 key 字串本身。 */
+const CALL_TYPE_LABELS = {
+  chat: "AiApiPage.callTypeChat",
+  recommend: "AiApiPage.callTypeRecommend",
+  chat_completion: "AiApiPage.callTypeChatCompletion",
+};
 
 /* ── Usage record row ── */
 function UsageRecordRow({ item }) {
   const { t } = useTranslation("ai");
   const [expanded, setExpanded] = useState(false);
 
-  const succeeded = item.status === "success";
-  const callTypeLabels = {
-    chat: "AiApiPage.callTypeChat",
-    recommend: "AiApiPage.callTypeRecommend",
-    chat_completion: "AiApiPage.callTypeChatCompletion",
-  };
-  const callTypeKey = callTypeLabels[item.call_type];
+  const succeeded = isOkStatus(item.status);
+  const callTypeKey = CALL_TYPE_LABELS[item.call_type];
   const model = formatModelDisplay(item.model_name);
   const createdAt = formatDateTime(item.created_at);
   const detailId = `usage-record-${String(item.id).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
@@ -946,20 +925,15 @@ function MyUsageTab() {
   const [recordsError, setRecordsError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  // 快速切換區間時，只採用最後一次送出的請求；慢回來的舊區間不能蓋掉新資料
-  const requestRef = useRef(0);
 
-  const { start, end } = useMemo(() => {
-    const now = new Date();
-    const s = new Date(now);
-    if (preset === "7d") s.setDate(s.getDate() - 7);
-    else if (preset === "30d") s.setDate(s.getDate() - 30);
-    else s.setDate(s.getDate() - 90);
-    return { start: s.toISOString(), end: now.toISOString() };
-  }, [preset]);
+  const { startDate: start, endDate: end } = useMemo(() => presetToRange(preset), [preset]);
+
+  /* 快速切換區間時只採用最後一次 load 的結果；進行中的「載入更多」
+     在區間改變後也要丟掉，不能把舊區間的紀錄接到新清單後面 */
+  const loadSeqRef = useRef(0);
 
   const load = useCallback(async () => {
-    const requestId = ++requestRef.current;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setUsageError(false);
     setRecordsError(false);
@@ -967,7 +941,7 @@ function MyUsageTab() {
       AiApiService.getMyUsage({ start_date: start, end_date: end }),
       AiApiService.getMyUsageRecords({ start_date: start, end_date: end, limit: USAGE_RECORD_PAGE_SIZE }),
     ]);
-    if (requestRef.current !== requestId) return;
+    if (seq !== loadSeqRef.current) return;
     if (usageRes.status === "fulfilled") setUsageData(usageRes.value);
     else setUsageError(true);
     if (recRes.status === "fulfilled") {
@@ -986,7 +960,7 @@ function MyUsageTab() {
   const hasMoreRecords = !recordsError && records.length > 0 && records.length < recordsCount;
 
   const loadMore = async () => {
-    const requestId = requestRef.current;
+    const seq = loadSeqRef.current;
     setLoadingMore(true);
     try {
       const res = await AiApiService.getMyUsageRecords({
@@ -995,12 +969,12 @@ function MyUsageTab() {
         skip: records.length,
         limit: USAGE_RECORD_PAGE_SIZE,
       });
-      if (requestRef.current !== requestId) return;
+      if (seq !== loadSeqRef.current) return;
       setRecords((prev) => [...prev, ...(res?.data ?? [])]);
       setRecordsCount(res?.count ?? 0);
     } catch (e) {
       /* 維持現有清單，不覆蓋成功資料；但要讓使用者知道沒載到 */
-      if (requestRef.current === requestId) toast.error(e?.message ?? t("AiApiPage.recordsLoadMoreError"));
+      if (seq === loadSeqRef.current) toast.error(e?.message ?? t("AiApiPage.recordsLoadMoreError"));
     } finally {
       setLoadingMore(false);
     }
@@ -1236,11 +1210,11 @@ export default function AiApiPage() {
     { value: "never", label: t("AiApiPage.durationOptionNever") },
   ];
 
-  /* 「API 聊天」分頁先下架：它用的是打包進前端的共用金鑰（VITE_AI_CHAT_API_KEY），
-     任何人打開開發者工具都拿得到，用量也不會記在使用者身上。等後端改成以登入身分代為呼叫再接回；
-     這裡刻意不 import AiApiChatTab，金鑰才不會被打包進網頁。 */
+  /* 「API 聊天」用登入者自己核准的金鑰（只在需要時向擁有者專用端點取回、留在記憶體），
+     不再打包共用金鑰；絕不能改回讀 VITE_* 環境變數，那會公開在前端 bundle 裡 */
   const TABS = [
     { key: "keys", label: t("AiApiPage.tabKeys") },
+    { key: "chat", label: t("AiApiPage.tabChat") },
     { key: "records", label: t("AiApiPage.tabRecords") },
     { key: "usage", label: t("AiApiPage.tabUsage") },
   ];
@@ -1530,6 +1504,7 @@ export default function AiApiPage() {
 
         {/* ---- Tab: 我的用量 ---- */}
         {activeTab === "usage" && <MyUsageTab />}
+        {activeTab === "chat" && <Suspense fallback={<LoadingState />}><AiApiChatTab credentials={activeCredentials} credentialsLoading={loading} /></Suspense>}
       </div>
 
       {detailCredential && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { furthestReachableStep, parseStudentEmails, templateBuilderPath, visibleWeekCount, weekPayload } from "./ClassSetupPage";
+import { furthestReachableStep, templateBuilderPath, weekPayload } from "./ClassSetupPage";
 
 describe("furthestReachableStep", () => {
   it("還沒建班只能停在第一步", () => {
@@ -13,16 +13,6 @@ describe("furthestReachableStep", () => {
 
   it("每週任務是選填：必要步驟都完成就能直接到確認建立", () => {
     expect(furthestReachableStep({ saved: true, hasStudents: true, hasEnvironment: true })).toBe(5);
-  });
-});
-
-describe("parseStudentEmails", () => {
-  it("accepts common separators, normalizes case, and removes duplicates", () => {
-    expect(parseStudentEmails("A@EXAMPLE.COM, b@example.com\nA@example.com; c@example.com")).toEqual([
-      "a@example.com",
-      "b@example.com",
-      "c@example.com",
-    ]);
   });
 });
 
@@ -88,16 +78,6 @@ describe("weekPayload publishing", () => {
     );
 
     expect(rows[0].status).toBe("completed");
-  });
-});
-
-describe("visibleWeekCount", () => {
-  it("只算學生真的看得到的週次", () => {
-    expect(visibleWeekCount([
-      { status: "draft" },
-      { status: "published" },
-      { status: "completed" },
-    ])).toBe(2);
   });
 });
 

@@ -16,16 +16,15 @@ import FileDropzone from "../../components/FileDropzone/FileDropzone";
 import MIcon from "../../components/MIcon";
 import RotatingWelcome from "../../components/RotatingWelcome/RotatingWelcome";
 import { AppearanceQuickSettings } from "../personal/account/AppearanceSettings";
-import SegmentedControl from "../../components/SegmentedControl/SegmentedControl";
 import Stepper from "../../components/Stepper/Stepper";
 import TotpEnrollment from "../../components/TotpEnrollment/TotpEnrollment";
 import { useAuth } from "../../contexts/AuthContext";
 import { THEME_DEFAULTS, useTheme } from "../../contexts/ThemeContext";
 import { useToast } from "../../hooks/useToast";
-import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, setLanguage } from "../../i18n";
 import { AccountService } from "../../services/account";
 import { downscaleImage } from "../../utils/image/downscaleImage";
 import shell from "../setup/SetupPage.module.scss";
+import { LANG_OPTIONS, LanguagePicker, Notice, useCurrentLanguage } from "../setup/wizardParts";
 import styles from "./OnboardingPage.module.scss";
 
 const STEP_PROFILE = 0;
@@ -37,52 +36,21 @@ const STEP_KEYS = ["profile", "appearance", "totp", "finish"];
 /* 與帳號設定的姓名欄同一個上限 */
 const NAME_MAX_LENGTH = 30;
 
-/* 語言用原生名稱顯示，不翻譯 */
-const LANG_OPTIONS = [
-  { key: "zh-TW", label: "繁體中文" },
-  { key: "en", label: "English" },
-  { key: "ja", label: "日本語" },
-];
-
 const MODE_OPTIONS = [
   { key: "light", icon: "light_mode", labelKey: "OnboardingPage.modeLight" },
   { key: "dark", icon: "dark_mode", labelKey: "OnboardingPage.modeDark" },
   { key: "system", icon: "monitor", labelKey: "OnboardingPage.modeSystem" },
 ];
 
-function useCurrentLanguage() {
-  const { i18n } = useTranslation();
-  return SUPPORTED_LANGUAGES.includes(i18n.language) ? i18n.language : DEFAULT_LANGUAGE;
-}
-
-/* ─── 外框（與初始化精靈同一套樣式） ─────────────────────── */
-
-function Notice({ icon = "info", tone = "info", children }) {
-  return (
-    <div className={`${shell.notice} ${shell[`notice_${tone}`]}`}>
-      <MIcon name={icon} size={20} />
-      <div>{children}</div>
-    </div>
-  );
-}
-
 /* ─── 歡迎：選語言 ───────────────────────────────────────── */
 
 function LanguageWelcome({ onContinue }) {
   const { t } = useTranslation("login");
-  const current = useCurrentLanguage();
   return (
     <div className={shell.welcome}>
       <RotatingWelcome className={shell.welcomeTitle} i18nKey="OnboardingPage.welcomeTitle" />
       <p className={styles.welcomeHint}>{t("OnboardingPage.welcomeHint")}</p>
-      {/* 互斥選項一律用共用 SegmentedControl；語言名稱用原生寫法，按鈕帶 lang 讓讀屏用對的語音 */}
-      <SegmentedControl
-        className={shell.langSwitch}
-        ariaLabel={t("OnboardingPage.languageLabel")}
-        value={current}
-        onChange={setLanguage}
-        options={LANG_OPTIONS.map((option) => ({ value: option.key, label: option.label, buttonProps: { lang: option.key } }))}
-      />
+      <LanguagePicker className={shell.langSwitch} ariaLabel={t("OnboardingPage.languageLabel")} />
       <button type="button" className={shell.btnPrimary} onClick={onContinue}>
         {t("OnboardingPage.continue")}
         <MIcon name="arrow_forward" size={18} />

@@ -1,6 +1,5 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import { Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import MIcon from "../components/MIcon";
 import LoadingState from "../components/LoadingState/LoadingState";
@@ -17,9 +16,6 @@ import ErrorBoundary from "../components/ErrorBoundary/ErrorBoundary";
 import UserGuide from "../components/UserGuide/UserGuide";
 import { LayoutContext } from "./layoutContext";
 import styles from "./DashboardLayout.module.scss";
-
-export { LayoutContext };
-
 
 const COLLAPSE_MIN_WIDTH = 1024;
 

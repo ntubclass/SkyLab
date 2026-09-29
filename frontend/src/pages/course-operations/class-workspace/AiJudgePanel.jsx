@@ -80,6 +80,12 @@ const SCRIPT_GENERATION_PROGRESS = {
   generating: { title: "progressGeneratingTitle", message: "progressGeneratingMessage" },
 };
 
+/** AI 回覆放進製作結果提示時的精簡版：去頭尾空白，超過 360 字截斷加刪節號 */
+function compactAssistantSummary(assistantMessage) {
+  const summary = typeof assistantMessage?.content === "string" ? assistantMessage.content.trim() : "";
+  return summary.length > 360 ? `${summary.slice(0, 357)}…` : summary;
+}
+
 export function ScriptGenerationNotice({
   isCreatingScript = false,
   status = null,
@@ -1102,6 +1108,32 @@ export function proposalToolCallLines(message) {
   return dedupedReversed.reverse();
 }
 
+/** 待送出的附件列：沒有附件時不畫；onRemove 沒給就不顯示移除鈕 */
+function ChatAttachmentRail({ attachments, onRemove, disabled }) {
+  const { t } = useTranslation("teaching");
+  if (!attachments.length) return null;
+  return (
+    <div className={styles.chatAttachmentRail} aria-label={t("AiJudgePanel.pendingAttachmentsAria")}>
+      {attachments.map((attachment) => (
+        <div key={attachment.id} className={styles.chatAttachmentChip}>
+          <MIcon name="description" size={15} />
+          <span title={attachment.original_filename}>{attachment.original_filename}</span>
+          <small>{attachment.status === "ready" ? t("AiJudgePanel.attachmentReady") : t("AiJudgePanel.attachmentProcessing")}</small>
+          {onRemove && <button
+            type="button"
+            className={styles.chatAttachmentRemove}
+            aria-label={t("AiJudgePanel.removeAttachmentAria", { name: attachment.original_filename })}
+            disabled={disabled}
+            onClick={() => onRemove(attachment)}
+          >
+            <MIcon name="close" size={14} />
+          </button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ChatPanel({
   messages,
   onSendMessage,
@@ -1138,10 +1170,12 @@ export function ChatPanel({
     const content = input.trim();
     if ((!content && !pendingAttachments.length) || isLoading || isClearing || isUploading || disabled) return;
     setInput("");
-    const sent = await onSendMessage(content, false, pendingAttachments);
-    // 沒送出去（檢查表還在載入、自動儲存失敗、AI 回應失敗）就把內容還回輸入框；
-    // 若老師已經開始打下一則，不覆蓋
-    if (sent === false) setInput((current) => current || content);
+    // 呼叫端明確回傳 false（尚未載入檢查表、自動儲存失敗等）代表訊息沒送出：把原文放回輸入框，不要默默吃掉。
+    Promise.resolve(onSendMessage(content, false, pendingAttachments))
+      .then((accepted) => {
+        if (accepted === false) setInput((current) => current || content);
+      })
+      .catch(() => {});
   }
 
   function handleAttachmentInput(event) {
@@ -1150,16 +1184,47 @@ export function ChatPanel({
     if (file) onUploadFile?.(file);
   }
 
+  const canInteract = !(isLoading || isClearing || isUploading || disabled);
+  const canSend = canInteract && (Boolean(input.trim()) || pendingAttachments.length > 0);
   // 整個對話區都能把文件拖進來；跟輸入框旁的＋一樣一次加一個
   const { dragging, dropProps } = useFileDrop(([file]) => onUploadFile?.(file), {
-    disabled: isLoading || isClearing || isUploading || disabled,
+    disabled: !canInteract,
   });
   // 空對話（無可顯示訊息且非載入中）走中央 Hero Composer：置中 ✦＋標題＋圓角輸入框；
   // 有訊息或載入中則維持訊息串＋底部輸入的既有版面。
   const isEmpty = visibleMessages.length === 0 && !isLoading;
-  const canInteract = !(isLoading || isClearing || isUploading || disabled);
-  const canSend = canInteract && (Boolean(input.trim()) || pendingAttachments.length > 0);
   const heroPlaceholder = t("AiJudgePanel.chatHeroPlaceholder");
+
+  /* 以下幾塊兩種版面（中央 Hero／底部輸入列）共用；同一時間只會畫其中一種版面 */
+  const attachmentRail = (
+    <ChatAttachmentRail attachments={pendingAttachments} onRemove={onRemoveAttachment} disabled={!canInteract} />
+  );
+  const attachmentInput = onUploadFile && (
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept=".md,.txt,.doc,.docx,.pdf"
+      className={styles.srOnly}
+      tabIndex={-1}
+      onChange={handleAttachmentInput}
+    />
+  );
+  const sourcesToggle = onToggleSources && <button
+    type="button"
+    className={styles.btnSecondary}
+    disabled={!canInteract}
+    onClick={onToggleSources}
+    aria-expanded={sourcesOpen}
+    aria-controls="ai-chat-data-sources"
+  >
+    <MIcon name="description" size={14} />
+    {t("AiJudgePanel.sourcesBtn")}
+  </button>;
+  const sourcesPanel = sourcesOpen && sourcesContent && (
+    <div id="ai-chat-data-sources" className={styles.chatSourcesPanel}>
+      {sourcesContent}
+    </div>
+  );
 
   return (
     <div className={`${styles.chatPanel} ${isEmpty ? styles.chatPanelEmpty : ""}`} {...(onUploadFile ? dropProps : {})}>
@@ -1171,26 +1236,7 @@ export function ChatPanel({
             <p className={styles.chatHeroDesc}>
               {t("AiJudgePanel.chatHeroDesc")}
             </p>
-            {pendingAttachments.length > 0 && (
-              <div className={styles.chatAttachmentRail} aria-label={t("AiJudgePanel.pendingAttachmentsAria")}>
-                {pendingAttachments.map((attachment) => (
-                  <div key={attachment.id} className={styles.chatAttachmentChip}>
-                    <MIcon name="description" size={15} />
-                    <span title={attachment.original_filename}>{attachment.original_filename}</span>
-                    <small>{attachment.status === "ready" ? t("AiJudgePanel.attachmentReady") : t("AiJudgePanel.attachmentProcessing")}</small>
-                    {onRemoveAttachment && <button
-                      type="button"
-                      className={styles.chatAttachmentRemove}
-                      aria-label={t("AiJudgePanel.removeAttachmentAria", { name: attachment.original_filename })}
-                      disabled={!canInteract}
-                      onClick={() => onRemoveAttachment(attachment)}
-                    >
-                      <MIcon name="close" size={14} />
-                    </button>}
-                  </div>
-                ))}
-              </div>
-            )}
+            {attachmentRail}
             <form
               className={styles.chatHeroComposer}
               aria-label={t("AiJudgePanel.chatFormAria")}
@@ -1216,14 +1262,7 @@ export function ChatPanel({
               <div className={styles.chatHeroFooter}>
                 {onUploadFile ? (
                   <>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".md,.txt,.doc,.docx,.pdf"
-                      className={styles.srOnly}
-                      tabIndex={-1}
-                      onChange={handleAttachmentInput}
-                    />
+                    {attachmentInput}
                     <button
                       type="button"
                       className={styles.btnSecondary}
@@ -1248,22 +1287,8 @@ export function ChatPanel({
                 </button>
               </div>
             </form>
-            {onToggleSources && <button
-              type="button"
-              className={styles.btnSecondary}
-              disabled={!canInteract}
-              onClick={onToggleSources}
-              aria-expanded={sourcesOpen}
-              aria-controls="ai-chat-data-sources"
-            >
-              <MIcon name="description" size={14} />
-              {t("AiJudgePanel.sourcesBtn")}
-            </button>}
-            {sourcesOpen && sourcesContent && (
-              <div id="ai-chat-data-sources" className={styles.chatSourcesPanel}>
-                {sourcesContent}
-              </div>
-            )}
+            {sourcesToggle}
+            {sourcesPanel}
           </div>
         ) : (
           visibleMessages.map((msg, i) => (
@@ -1336,53 +1361,20 @@ export function ChatPanel({
 
       {!isEmpty && (
       <div className={styles.chatInputArea}>
-        {pendingAttachments.length > 0 && (
-          <div className={styles.chatAttachmentRail} aria-label={t("AiJudgePanel.pendingAttachmentsAria")}>
-            {pendingAttachments.map((attachment) => (
-              <div key={attachment.id} className={styles.chatAttachmentChip}>
-                <MIcon name="description" size={15} />
-                <span title={attachment.original_filename}>{attachment.original_filename}</span>
-                <small>{attachment.status === "ready" ? t("AiJudgePanel.attachmentReady") : t("AiJudgePanel.attachmentProcessing")}</small>
-                {onRemoveAttachment && <button
-                  type="button"
-                  className={styles.chatAttachmentRemove}
-                  aria-label={t("AiJudgePanel.removeAttachmentAria", { name: attachment.original_filename })}
-                  disabled={isLoading || isClearing || isUploading || disabled}
-                  onClick={() => onRemoveAttachment(attachment)}
-                >
-                  <MIcon name="close" size={14} />
-                </button>}
-              </div>
-            ))}
-          </div>
-        )}
+        {attachmentRail}
         <div className={styles.chatActions}>
-          {onToggleSources && <button
-            type="button"
-            className={styles.btnSecondary}
-            disabled={isLoading || isClearing || isUploading || disabled}
-            onClick={onToggleSources}
-            aria-expanded={sourcesOpen}
-            aria-controls="ai-chat-data-sources"
-          >
-            <MIcon name="description" size={14} />
-            {t("AiJudgePanel.sourcesBtn")}
-          </button>}
+          {sourcesToggle}
           <button
             type="button"
             className={styles.btnSecondary}
-            disabled={isLoading || isClearing || isUploading || disabled || messages.length === 0}
+            disabled={!canInteract || messages.length === 0}
             onClick={onClearMessages}
           >
             {isClearing ? <Spinner size={14} /> : <MIcon name="delete_sweep" size={14} />}
             {t("AiJudgePanel.clearChatBtn")}
           </button>
         </div>
-        {sourcesOpen && sourcesContent && (
-          <div id="ai-chat-data-sources" className={styles.chatSourcesPanel}>
-            {sourcesContent}
-          </div>
-        )}
+        {sourcesPanel}
         <form
           className={styles.chatForm}
           onSubmit={(e) => {
@@ -1392,18 +1384,11 @@ export function ChatPanel({
         >
           {onUploadFile && (
             <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".md,.txt,.doc,.docx,.pdf"
-                className={styles.srOnly}
-                tabIndex={-1}
-                onChange={handleAttachmentInput}
-              />
+              {attachmentInput}
               <button
                 type="button"
                 className={`${styles.iconBtn} ${styles.chatAttachButton}`}
-                disabled={isLoading || isClearing || isUploading || disabled}
+                disabled={!canInteract}
                 aria-label={t("AiJudgePanel.addAttachmentAria")}
                 title={t("AiJudgePanel.addAttachmentAria")}
                 onClick={() => fileInputRef.current?.click()}
@@ -1423,12 +1408,12 @@ export function ChatPanel({
             }}
             placeholder={t("AiJudgePanel.chatInputPlaceholder")}
             rows={1}
-            disabled={isLoading || isClearing || isUploading || disabled}
+            disabled={!canInteract}
           />
           <button
             type="submit"
             className={styles.btnSecondary}
-            disabled={isLoading || isClearing || isUploading || disabled || (!input.trim() && !pendingAttachments.length)}
+            disabled={!canSend}
             aria-label={t("AiJudgePanel.sendAria")}
           >
             <MIcon name="send" size={16} />
@@ -1815,10 +1800,7 @@ export function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCr
     let cancelled = false;
     setMessages([]);
     setPendingAttachments([]);
-    setPendingProposal(null);
-    setSelectedProposalIds(new Set());
-    setPendingProposalMeta(null);
-    setPendingProposalIsRefine(false);
+    clearPendingProposal();
     if (!judgeSession?.id) return undefined;
     AiJudgeService.listSessionMessages(classId, judgeSession.id)
       .then((rows) => {
@@ -1838,11 +1820,7 @@ export function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCr
       setScriptGenerationNotice(null);
       setSourceFileId(null);
       setPendingReviewIds(new Set());
-      setPendingProposal(null);
-      setSelectedProposalIds(new Set());
-      setPendingProposalMeta(null);
-      setPendingProposalIsRefine(false);
-      setPendingItemResults(null);
+      clearPendingProposal();
     }
 
     if (!judgeSession?.selected_file_id) {
@@ -2149,11 +2127,7 @@ export function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCr
       }
       setMessages([]);
       setPendingAttachments([]);
-      setPendingProposal(null);
-      setSelectedProposalIds(new Set());
-      setPendingProposalMeta(null);
-      setPendingProposalIsRefine(false);
-      setPendingItemResults(null);
+      clearPendingProposal();
       setScriptGenerationNotice(null);
       toast.success(t("AiJudgePanel.chatCleared"));
     } catch (err) {
@@ -2166,11 +2140,9 @@ export function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCr
   async function handleSaveAndCreate() {
     if (!judgeSession?.id || !sourceFileId || !analysis || isCreatingScript) return;
     setIsCreatingScript(true);
+    /* 製作中 ScriptGenerationNotice 只看 status 顯示進度，不看 notice；
+       notice 只在結束時（成功／失敗）寫入，所以進行中不必另外設定 */
     setScriptGenerationStatus("saving");
-    setScriptGenerationNotice({
-      status: "saving",
-      message: t("AiJudgePanel.buildSaving"),
-    });
     try {
       if (autosaveRef.current && !(await autosaveRef.current.flush())) {
         setScriptGenerationNotice({
@@ -2212,13 +2184,7 @@ export function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCr
       setPendingProposalMeta(hasSelectable ? { baseRevision } : null);
       setPendingProposalIsRefine(hasSelectable);
       if (assistantMetadata.script_ready === false) {
-        const assistantSummary = typeof assistantMessage?.content === "string"
-          ? assistantMessage.content.trim()
-          : "";
-        const compactSummary = assistantSummary.length > 360
-          ? `${assistantSummary.slice(0, 357)}…`
-          : assistantSummary;
-        const message = compactSummary || (assistantMetadata.status === "unsupported"
+        const message = compactAssistantSummary(assistantMessage) || (assistantMetadata.status === "unsupported"
           ? t("AiJudgePanel.buildUnsupported")
           : assistantMetadata.status === "analysis_error"
             ? t("AiJudgePanel.buildAnalysisError")
@@ -2228,12 +2194,8 @@ export function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCr
         return;
       }
       if (assistantMetadata.script_ready !== true) {
-        const assistantSummary = typeof assistantMessage?.content === "string"
-          ? assistantMessage.content.trim()
-          : "";
-        const message = assistantSummary.length > 360
-          ? `${assistantSummary.slice(0, 357)}…`
-          : assistantSummary || t("AiJudgePanel.buildNoSafetyState");
+        const message = compactAssistantSummary(assistantMessage)
+          || t("AiJudgePanel.buildNoSafetyState");
         setScriptGenerationNotice({ status: "error", message });
         toast.error(message);
         return;
@@ -2261,16 +2223,8 @@ export function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCr
       }
       pendingReviewIdsByFileRef.current.set(sourceFileId, new Set());
       setPendingReviewIds(new Set());
-      setPendingProposal(null);
-      setSelectedProposalIds(new Set());
-      setPendingProposalMeta(null);
-      setPendingProposalIsRefine(false);
+      clearPendingProposal();
       const savedRevision = analysisRevisionsRef.current.get(sourceFileId);
-      setScriptGenerationStatus("queued");
-      setScriptGenerationNotice({
-        status: "queued",
-        message: t("AiJudgePanel.buildAllPassed"),
-      });
       setScriptGenerationStatus("generating");
       const artifact = await AiJudgeService.createSessionScriptSet(
         classId,
@@ -2425,7 +2379,7 @@ export function RubricsTab({ classId, judgeSession, onSessionUpdated, onScriptCr
               isLoading={isChatting}
               loadingText={isItemwiseAnalysis ? t("AiJudgePanel.itemwiseLoading") : ""}
               isClearing={isClearingMessages}
-              disabled={isCreatingScript}
+              disabled={isCreatingScript || !analysis}
               onToggleSources={selectedSource?.source_type === "uploaded" ? () => setSourcesOpen((current) => !current) : undefined}
               sourcesOpen={sourcesOpen}
               sourcesContent={judgeSession?.id ? (
@@ -3123,11 +3077,6 @@ export function getTargetReviewSummary(target) {
   return { kind: "automatic", label: jt("statusAutomatic"), pending: 0, reviewable: 0 };
 }
 
-function reviewDraft(target) {
-  const review = targetTeacherReview(target);
-  return { feedback: review.feedback, decisions: { ...review.decisions } };
-}
-
 /* 草稿跟已儲存的比：決定逐項比對，取消再勾回來只是 key 順序不同，不算改過 */
 export function isReviewDraftDirty(draft, saved) {
   if (!draft) return false;
@@ -3232,9 +3181,6 @@ export function getStudentOverviewStatus(machines) {
   const kinds = new Set(summaries.map((item) => item.kind));
   if (kinds.has("pending")) return { kind: "pending", label: jt("statusPendingConfirm", { count: pending }), pending, reviewable };
   if (kinds.has("failed")) return { kind: "failed", label: jt("statusSomeFailed"), pending: 0, reviewable };
-  if (kinds.has("reviewed") && ![...kinds].some((kind) => kind === "automatic" || kind === "missing")) {
-    return { kind: "reviewed", label: jt("statusReviewed"), pending: 0, reviewable };
-  }
   if (kinds.has("reviewed")) return { kind: "reviewed", label: jt("statusReviewed"), pending: 0, reviewable };
   if (kinds.has("automatic") && kinds.size === 1) return { kind: "automatic", label: jt("statusAutomatic"), pending: 0, reviewable };
   if (kinds.has("missing") && kinds.size === 1) return { kind: "missing", label: jt("statusNotRun"), pending: 0, reviewable };
@@ -3263,8 +3209,8 @@ function studentOverviewNumber(student) {
     user.student_number
     ?? user.student_no
     ?? user.account
-    ?? email.split("@")[0]
-    ?? student?.studentId
+    // split 一定回傳字串（沒有 email 時是空字串），要用 || 才會退到 studentId
+    ?? (email.split("@")[0] || student?.studentId)
     ?? "",
   );
 }
@@ -3670,7 +3616,7 @@ export function TeacherReviewTab({
           if (loadRequestRef.current !== requestId) return;
           nextState = { mode: "run", run: detail };
           for (const target of detail?.target_results_json?.targets ?? []) {
-            nextDrafts[String(target.vmid)] = reviewDraft(target);
+            nextDrafts[String(target.vmid)] = reviewDraftFromTeacherReview(target?.teacher_review);
           }
         }
       }
@@ -3838,7 +3784,7 @@ export function TeacherReviewTab({
   }
 
   async function saveRow(row) {
-    const draft = drafts[row.key] ?? reviewDraft(row.target);
+    const draft = drafts[row.key] ?? reviewDraftFromTeacherReview(row.target?.teacher_review);
     setSavingKey(row.key);
     try {
       if (!row.runId) throw new Error(t("AiJudgePanel.missingRunId"));
@@ -3879,7 +3825,7 @@ export function TeacherReviewTab({
         }));
       } else if (reviewState?.mode === "run") {
         setReviewState({ mode: "run", run: updated });
-        setDrafts((current) => ({ ...current, [row.key]: reviewDraft(savedTarget) }));
+        setDrafts((current) => ({ ...current, [row.key]: reviewDraftFromTeacherReview(savedTarget?.teacher_review) }));
       }
       toast.success(t("AiJudgePanel.reviewSaved"));
     } catch (error) {
@@ -4115,7 +4061,7 @@ export function TeacherReviewTab({
               {isOpen && (
                 <div className={styles.reviewStudentBody}>
                   {student.machines.map((row) => {
-                    const draft = drafts[row.key] ?? reviewDraft(row.target);
+                    const draft = drafts[row.key] ?? reviewDraftFromTeacherReview(row.target?.teacher_review);
                     const saved = targetTeacherReview(row.target);
                     const isDirty = Boolean(row.target) && isReviewDraftDirty(draft, saved);
                     return (

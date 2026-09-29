@@ -13,15 +13,15 @@ import { useTranslation } from "react-i18next";
 import MIcon from "../../components/MIcon";
 import PasswordInput from "../../components/PasswordInput/PasswordInput";
 import RotatingWelcome from "../../components/RotatingWelcome/RotatingWelcome";
-import SegmentedControl from "../../components/SegmentedControl/SegmentedControl";
 import Stepper from "../../components/Stepper/Stepper";
 import { LoadingSpinner } from "../../components/LoadingState/LoadingState";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useToast } from "../../hooks/useToast";
-import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, setLanguage } from "../../i18n";
 import { SetupService } from "../../services/setup";
 import { markSetupCompleted, useSetupStatus } from "./useSetupStatus";
+import { pickDefaultNode } from "./setupDefaults";
+import { LanguagePicker, Notice } from "./wizardParts";
 import styles from "./SetupPage.module.scss";
 
 const STEP_ADMIN = 0;
@@ -29,13 +29,6 @@ const STEP_PROXMOX = 1;
 const STEP_SUBNET = 2;
 const STEP_FINISH = 3;
 const STEP_KEYS = ["admin", "proxmox", "subnet", "finish"];
-
-/* 語言用原生名稱顯示，不翻譯 */
-const LANG_OPTIONS = [
-  { key: "zh-TW", label: "繁體中文" },
-  { key: "en", label: "English" },
-  { key: "ja", label: "日本語" },
-];
 
 const IPV4_PATTERN = "^(\\d{1,3}\\.){3}\\d{1,3}$";
 const MIN_PASSWORD_LENGTH = 8;
@@ -135,15 +128,6 @@ function PageShell({ wide = false, children }) {
   );
 }
 
-function Notice({ icon = "info", tone = "info", children }) {
-  return (
-    <div className={`${styles.notice} ${styles[`notice_${tone}`]}`}>
-      <MIcon name={icon} size={20} />
-      <div>{children}</div>
-    </div>
-  );
-}
-
 /* 該步驟已在別處完成時的替代畫面：只有說明與上一步／下一步 */
 function DoneStep({ title, notice, onBack, onNext }) {
   const { t } = useTranslation("login");
@@ -168,19 +152,11 @@ function DoneStep({ title, notice, onBack, onNext }) {
 /* ─── 歡迎：選語言 ───────────────────────────────────────── */
 
 function LanguageWelcome({ onContinue }) {
-  const { t, i18n } = useTranslation("login");
-  const current = SUPPORTED_LANGUAGES.includes(i18n.language) ? i18n.language : DEFAULT_LANGUAGE;
+  const { t } = useTranslation("login");
   return (
     <div className={styles.welcome}>
       <RotatingWelcome className={styles.welcomeTitle} i18nKey="SetupPage.welcomeTitle" />
-      {/* 互斥選項一律用共用 SegmentedControl；語言名稱用原生寫法，按鈕帶 lang 讓讀屏用對的語音 */}
-      <SegmentedControl
-        className={styles.langSwitch}
-        ariaLabel={t("SetupPage.languageLabel")}
-        value={current}
-        onChange={setLanguage}
-        options={LANG_OPTIONS.map((option) => ({ value: option.key, label: option.label, buttonProps: { lang: option.key } }))}
-      />
+      <LanguagePicker className={styles.langSwitch} ariaLabel={t("SetupPage.languageLabel")} />
       <button type="button" className={styles.btnPrimary} onClick={onContinue}>
         {t("SetupPage.continue")}
         <MIcon name="arrow_forward" size={18} />
@@ -220,7 +196,7 @@ function AdminStep({ alreadyDone, savedEmail, onSaved, onBack, onNext }) {
         disable_default_admin: Boolean(form.disable_default_admin),
       });
       toast.success(result.created ? t("SetupPage.adminSaved") : t("SetupPage.adminTakenOver"));
-      onSaved({ email: result.email, password: form.password, result });
+      onSaved({ email: result.email, password: form.password });
     } catch (err) {
       setError(err?.message ?? t("SetupPage.adminSaveFailed"));
     } finally {
@@ -379,7 +355,7 @@ function ProxmoxStep({ alreadyDone, onSaved, onSkip, onBack, onNext }) {
           ?? result.storages.find((s) => s.can_vm);
         setForm((prev) => ({
           ...prev,
-          default_node: prev.default_node || primary?.name || "",
+          default_node: pickDefaultNode(prev.default_node, result.nodes),
           iso_storage: iso?.storage ?? prev.iso_storage,
           data_storage: data?.storage ?? prev.data_storage,
           name: prev.name || (result.is_cluster ? "cluster" : primary?.name || prev.host),
@@ -1011,10 +987,10 @@ export default function SetupPage() {
             onSaved={(saved) => {
               setAdminCreds({ email: saved.email, password: saved.password });
               setAdminDone(true);
-              goTo(STEP_PROXMOX);
+              setStep(STEP_PROXMOX);
             }}
             onBack={() => setStarted(false)}
-            onNext={() => goTo(STEP_PROXMOX)}
+            onNext={() => setStep(STEP_PROXMOX)}
           />
         )}
         {step === STEP_PROXMOX && (
@@ -1022,11 +998,11 @@ export default function SetupPage() {
             alreadyDone={steps.proxmox}
             onSaved={(result) => {
               setProxmoxResult(result);
-              goTo(STEP_SUBNET);
+              setStep(STEP_SUBNET);
             }}
-            onSkip={() => goTo(STEP_SUBNET)}
-            onBack={() => goTo(STEP_ADMIN)}
-            onNext={() => goTo(STEP_SUBNET)}
+            onSkip={() => setStep(STEP_SUBNET)}
+            onBack={() => setStep(STEP_ADMIN)}
+            onNext={() => setStep(STEP_SUBNET)}
           />
         )}
         {step === STEP_SUBNET && (
@@ -1034,11 +1010,11 @@ export default function SetupPage() {
             alreadyDone={steps.subnet}
             onSaved={(result) => {
               setSubnetResult(result);
-              goTo(STEP_FINISH);
+              setStep(STEP_FINISH);
             }}
-            onSkip={() => goTo(STEP_FINISH)}
-            onBack={() => goTo(STEP_PROXMOX)}
-            onNext={() => goTo(STEP_FINISH)}
+            onSkip={() => setStep(STEP_FINISH)}
+            onBack={() => setStep(STEP_PROXMOX)}
+            onNext={() => setStep(STEP_FINISH)}
           />
         )}
         {step === STEP_FINISH && (
@@ -1047,7 +1023,7 @@ export default function SetupPage() {
             adminCreds={adminCreds}
             proxmoxResult={proxmoxResult}
             subnetResult={subnetResult}
-            onBack={() => goTo(STEP_SUBNET)}
+            onBack={() => setStep(STEP_SUBNET)}
           />
         )}
       </>
