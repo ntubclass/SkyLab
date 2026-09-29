@@ -21,6 +21,7 @@ export default function EnvironmentChoice({ candidate, selected, suggested, onSe
   return <button
     type="button"
     className={`${selected ? styles.envChoiceSelected : ""}${suggested ? ` ${styles.envChoiceSuggested}` : ""}`}
+    aria-pressed={selected}
     disabled={disabled}
     onClick={onSelect}
   >
