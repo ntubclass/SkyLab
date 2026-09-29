@@ -136,6 +136,9 @@ src/pages/personal/resources/
 
 > 一律用 `var(--color-*)`，不要把狀態色寫死成 HEX——深色模式的 info / pending 亮色值才吃得到。
 
+> **徽章一律不加外框**：只用「狀態色 12% 淡底＋狀態色文字」，不要再加 `border`（實線、虛線都不要）。狀態、類型、範圍這類膠囊標籤都算徽章，非狀態的中性標籤用上面的 `badge_muted`。疊在畫布等會透出底圖的地方時，淡底改混 `var(--color-surface)`（`color-mix(in srgb, <色> 12%, var(--color-surface))`）讓它不透明，仍然不加框。
+> 分頁、SegmentedControl、Stepper 的選中框不在此列。
+
 ---
 
 ## SCSS 變數（\_variables.scss）
