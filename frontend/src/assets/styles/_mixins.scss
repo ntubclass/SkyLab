@@ -81,8 +81,9 @@
    .fieldInvalid.fieldInvalid { @include form-control-invalid; }
                                                  送出時未填的欄位，雙類名壓過巢狀選擇器
    控制項高度刻意與 .btnPrimary / .btnSecondary 一致（36px），
-   同一列的欄位與按鈕才會對齊。欄位的排列方式（幾欄、跨欄）寫在頁面自己的
-   grid 上，不要改這裡的字級或內距。 */
+   同一列的欄位與按鈕才會對齊：算法跟 btn-base 相同——行高沿用全站 1.6（14px 字 → 22.4）
+   ＋上下內距 6×2＋框 1×2 ≈ 36px。內距若寫 8px 會變 40px，跟按鈕並排差一截。
+   欄位的排列方式（幾欄、跨欄）寫在頁面自己的 grid 上，不要改這裡的字級或內距。 */
 @mixin form-field {
   display: flex;
   min-width: 0;
@@ -102,7 +103,7 @@
   box-sizing: border-box;
   width: 100%;
   min-height: 36px;
-  padding: 8px $form-control-padding-x;
+  padding: 6px $form-control-padding-x;
   border: 1px solid var(--color-border);
   border-radius: $radius-8;
   outline: 0;
@@ -126,6 +127,15 @@
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* 日期／時間欄的瀏覽器內建編輯區比一般文字高，照內距算會多 2px；直接鎖 36px */
+  &[type="date"],
+  &[type="time"],
+  &[type="datetime-local"],
+  &[type="month"],
+  &[type="week"] {
+    height: 36px;
   }
 }
 

@@ -431,6 +431,9 @@ if (!(await confirm({ title, message, confirmText, danger: true }))) return;
 > **規則一**：控制項高度固定 36px、字級 14px，刻意與 `.btnPrimary` / `.btnSecondary`
 > 一致——同一列的欄位與按鈕才會對齊。要更矮更小的表單請先問是不是真的需要，
 > 不要在頁面裡改 `min-height` 或 `font-size`。
+> 高度的算法跟按鈕相同：全站行高 1.6（14px 字 → 22.4）＋上下內距 6×2＋框 1×2 ≈ 36px。
+> 內距寫成 8px 就會變 40px；外框在容器上的搜尋框用 `min-height: 36px`，不要寫 38px。
+> 共用的 SegmentedControl 也固定 36px，跟欄位、按鈕放同一列不用另外鎖高度。
 
 > **規則二**：欄位怎麼排（幾欄、哪個跨欄）寫在頁面自己的 grid 上（`.formGrid`、
 > `.createFormGrid`、`.fieldFull`），mixin 只負責欄位本身長什麼樣。

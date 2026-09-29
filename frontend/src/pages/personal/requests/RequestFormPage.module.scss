@@ -325,7 +325,7 @@
 .input,
 .textarea {
   width: 100%;
-  padding: 9px 12px;
+  padding: 6px 12px;
   border: 1px solid var(--color-border);
   border-radius: $radius-8;
   font-size: $font-size-14;
@@ -342,6 +342,13 @@
 }
 
 .textarea { height: 80px; }
+
+/* 日期時間欄的內建編輯區比一般文字高，鎖 36px 才跟其他欄位一樣 */
+.input[type="datetime-local"],
+.input[type="date"],
+.input[type="time"] {
+  height: 36px;
+}
 
 /* 密碼欄的顯示/隱藏眼睛按鈕 */
 .typeToggle {
@@ -431,7 +438,7 @@
 /* ── Select ── */
 .select {
   width: 100%;
-  padding: 9px 12px;
+  padding: 6px 12px;
   border: 1px solid var(--color-border);
   border-radius: $radius-8;
   font-size: $font-size-14;
